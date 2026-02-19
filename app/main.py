@@ -27,7 +27,16 @@ parser = WebhookParser(LINE_CHANNEL_SECRET)
 
 app = FastAPI(title="GroupLineBot")
 
-TASKS_HTML = (Path(__file__).parent / "tasks_page.html").read_text(encoding="utf-8")
+_tasks_html_cache: str | None = None
+
+
+def _get_tasks_html() -> str:
+    global _tasks_html_cache
+    if _tasks_html_cache is None:
+        _tasks_html_cache = (Path(__file__).parent / "tasks_page.html").read_text(
+            encoding="utf-8"
+        )
+    return _tasks_html_cache
 
 
 # ---------------------------------------------------------------------------
@@ -110,19 +119,31 @@ async def handle_message(api, event: MessageEvent):
 # ---------------------------------------------------------------------------
 async def cmd_summary(api, event: MessageEvent, group_id: str):
     async with async_session() as session:
+        # Find the latest summary so we only summarize new messages
+        last_summary_stmt = (
+            select(Summary.message_to_id)
+            .where(Summary.group_id == group_id)
+            .order_by(Summary.id.desc())
+            .limit(1)
+        )
+        last_summary_result = await session.execute(last_summary_stmt)
+        last_message_id = last_summary_result.scalar_one_or_none()
+
         stmt = (
             select(Message)
             .where(Message.group_id == group_id)
             .where(Message.message_type == "text")
             .where(Message.content.isnot(None))
-            .order_by(Message.id.desc())
-            .limit(SUMMARY_MESSAGE_LIMIT)
         )
+        if last_message_id is not None:
+            stmt = stmt.where(Message.id > last_message_id)
+        stmt = stmt.order_by(Message.id.desc()).limit(SUMMARY_MESSAGE_LIMIT)
+
         result = await session.execute(stmt)
         rows = result.scalars().all()
 
     if not rows:
-        reply_text(api, event, "まだメッセージが保存されていません。")
+        reply_text(api, event, "新しいメッセージがありません（前回の要約以降）。")
         return
 
     rows = list(reversed(rows))  # chronological order
@@ -355,7 +376,7 @@ async def api_delete_all_tasks(group_id: str = Query(...)):
 @app.get("/tasks/view", response_class=HTMLResponse)
 async def tasks_page(group_id: str = Query(...)):
     await init_db()
-    return TASKS_HTML
+    return _get_tasks_html()
 
 
 # ---------------------------------------------------------------------------
