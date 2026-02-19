@@ -10,7 +10,7 @@ from linebot.v3.webhooks import (
     TextMessageContent,
 )
 from linebot.v3.webhook import WebhookParser
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.config import LINE_CHANNEL_SECRET, SUMMARY_MESSAGE_LIMIT
 from app.database import async_session, init_db
@@ -93,6 +93,12 @@ async def handle_message(api, event: MessageEvent):
             await cmd_tasks(api, event, group_id)
         elif cmd.startswith("/done "):
             await cmd_done_task(api, event, group_id, cmd)
+        elif cmd == "/clear-tasks":
+            await cmd_clear_tasks(api, event, group_id)
+        elif cmd == "/clear-messages":
+            await cmd_clear_messages(api, event, group_id)
+        elif cmd == "/clear-all":
+            await cmd_clear_all(api, event, group_id)
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +224,55 @@ async def cmd_done_task(api, event: MessageEvent, group_id: str, cmd: str):
         await session.commit()
 
     reply_text(api, event, f"✅ タスク #{task_id} を完了にしました: {task.title}")
+
+
+# ---------------------------------------------------------------------------
+# /clear-tasks – Delete all tasks for this group
+# ---------------------------------------------------------------------------
+async def cmd_clear_tasks(api, event: MessageEvent, group_id: str):
+    async with async_session() as session:
+        result = await session.execute(
+            delete(Task).where(Task.group_id == group_id)
+        )
+        await session.commit()
+    reply_text(api, event, f"🗑️ タスクを {result.rowcount} 件削除しました。")
+
+
+# ---------------------------------------------------------------------------
+# /clear-messages – Delete all stored messages for this group
+# ---------------------------------------------------------------------------
+async def cmd_clear_messages(api, event: MessageEvent, group_id: str):
+    async with async_session() as session:
+        result = await session.execute(
+            delete(Message).where(Message.group_id == group_id)
+        )
+        await session.commit()
+    reply_text(api, event, f"🗑️ メッセージ履歴を {result.rowcount} 件削除しました。")
+
+
+# ---------------------------------------------------------------------------
+# /clear-all – Delete all data (messages, tasks, summaries) for this group
+# ---------------------------------------------------------------------------
+async def cmd_clear_all(api, event: MessageEvent, group_id: str):
+    async with async_session() as session:
+        r_msg = await session.execute(
+            delete(Message).where(Message.group_id == group_id)
+        )
+        r_task = await session.execute(
+            delete(Task).where(Task.group_id == group_id)
+        )
+        r_sum = await session.execute(
+            delete(Summary).where(Summary.group_id == group_id)
+        )
+        await session.commit()
+    reply_text(
+        api,
+        event,
+        f"🗑️ 全データ削除完了\n"
+        f"  メッセージ: {r_msg.rowcount} 件\n"
+        f"  タスク: {r_task.rowcount} 件\n"
+        f"  要約: {r_sum.rowcount} 件",
+    )
 
 
 # ---------------------------------------------------------------------------
