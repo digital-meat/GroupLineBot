@@ -1,7 +1,6 @@
 """GroupLineBot – LINE group chat summarizer powered by LLM."""
 
 import logging
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from linebot.v3.exceptions import InvalidSignatureError
@@ -24,15 +23,7 @@ logger = logging.getLogger(__name__)
 
 parser = WebhookParser(LINE_CHANNEL_SECRET)
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    await init_db()
-    logger.info("Database initialized")
-    yield
-
-
-app = FastAPI(title="GroupLineBot", lifespan=lifespan)
+app = FastAPI(title="GroupLineBot")
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +34,8 @@ async def callback(
     request: Request,
     x_line_signature: str = Header(...),
 ):
+    await init_db()
+
     body = (await request.body()).decode("utf-8")
 
     try:

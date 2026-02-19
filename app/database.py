@@ -11,11 +11,14 @@ class Base(DeclarativeBase):
     pass
 
 
+_db_initialized = False
+
+
 async def init_db() -> None:
+    """Create tables if they don't exist. Safe to call multiple times."""
+    global _db_initialized
+    if _db_initialized:
+        return
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
-
-async def get_session() -> AsyncSession:
-    async with async_session() as session:
-        yield session
+    _db_initialized = True
