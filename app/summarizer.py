@@ -21,6 +21,8 @@ SUMMARY_SYSTEM_PROMPT = """\
 
 2. **タスク抽出**: チャットの中で出てきた「やること」「TODO」「頼まれたこと」を抽出してください。
    誰がやるか分かれば assignee に入れてください。
+   ※「前回の要約」が提供されている場合、その内容も含めてタスクを抽出してください。
+   ただし要約は新しいメッセージのみを対象にしてください。
 
 出力は必ず以下のJSON形式で返してください（他のテキストは含めないで）:
 {
@@ -39,6 +41,13 @@ CHUNK_SUMMARY_PROMPT = """\
 """
 
 USER_PROMPT_TEMPLATE = "以下のチャットログを要約してください:\n\n{chat_log}"
+
+USER_PROMPT_WITH_CONTEXT_TEMPLATE = """\
+【前回の要約（タスク抽出の参考にしてください）】
+{previous_summary}
+
+【新しいチャットログ（要約対象）】
+{chat_log}"""
 
 MAX_CHAT_LOG_CHARS = int(os.getenv("MAX_CHAT_LOG_CHARS", "60000"))
 
@@ -92,7 +101,7 @@ def _strip_code_fences(raw: str) -> str:
 # Gemini provider
 # ---------------------------------------------------------------------------
 
-def _call_gemini(prompt: str, system: str = SUMMARY_SYSTEM_PROMPT) -> str:
+def _call_gemini(prompt: str, system: str = SUMMARY_SYSTEM_PROMPT) -> tuple[str, dict]:
     import google.generativeai as genai
 
     genai.configure(api_key=GEMINI_API_KEY)
@@ -104,14 +113,23 @@ def _call_gemini(prompt: str, system: str = SUMMARY_SYSTEM_PROMPT) -> str:
         prompt,
         generation_config=genai.types.GenerationConfig(max_output_tokens=2048),
     )
-    return response.text
+    usage = {}
+    if hasattr(response, "usage_metadata") and response.usage_metadata:
+        meta = response.usage_metadata
+        usage = {
+            "provider": "gemini",
+            "model": "gemini-2.5-flash",
+            "input_tokens": getattr(meta, "prompt_token_count", 0) or 0,
+            "output_tokens": getattr(meta, "candidates_token_count", 0) or 0,
+        }
+    return response.text, usage
 
 
 # ---------------------------------------------------------------------------
 # Claude provider
 # ---------------------------------------------------------------------------
 
-def _call_claude(prompt: str, system: str = SUMMARY_SYSTEM_PROMPT) -> str:
+def _call_claude(prompt: str, system: str = SUMMARY_SYSTEM_PROMPT) -> tuple[str, dict]:
     import anthropic
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -121,7 +139,15 @@ def _call_claude(prompt: str, system: str = SUMMARY_SYSTEM_PROMPT) -> str:
         system=system,
         messages=[{"role": "user", "content": prompt}],
     )
-    return response.content[0].text
+    usage = {}
+    if response.usage:
+        usage = {
+            "provider": "claude",
+            "model": response.model,
+            "input_tokens": response.usage.input_tokens,
+            "output_tokens": response.usage.output_tokens,
+        }
+    return response.content[0].text, usage
 
 
 # ---------------------------------------------------------------------------
@@ -134,15 +160,20 @@ _PROVIDERS = {
 }
 
 
-def summarize_chat(messages: list[dict]) -> dict:
+def summarize_chat(
+    messages: list[dict], previous_summary: str | None = None
+) -> dict:
     """Send chat log to LLM and get back summary + tasks.
+
+    If *previous_summary* is given, it is prepended so the LLM can
+    extract tasks from broader context without re-summarizing old messages.
 
     If the chat log is too long for a single call, older messages are
     summarized in chunks first, and the condensed context is prepended
     to the most recent messages for the final summary.
 
     Returns:
-        {"summary": str, "tasks": [{"title": str, "assignee": str|None}]}
+        {"summary": str, "tasks": [...], "token_usage": [usage_dict, ...]}
     """
     provider_fn = _PROVIDERS.get(LLM_PROVIDER)
     if provider_fn is None:
@@ -150,13 +181,27 @@ def summarize_chat(messages: list[dict]) -> dict:
             f"Unknown LLM_PROVIDER: {LLM_PROVIDER!r}. Choose 'gemini' or 'claude'."
         )
 
+    all_usage: list[dict] = []
+
     lines = _format_lines(messages)
     full_log = "\n".join(lines)
 
+    def _build_prompt(chat_log: str) -> str:
+        if previous_summary:
+            return USER_PROMPT_WITH_CONTEXT_TEMPLATE.format(
+                previous_summary=previous_summary, chat_log=chat_log
+            )
+        return USER_PROMPT_TEMPLATE.format(chat_log=chat_log)
+
     # Fast path: fits in a single call
     if len(full_log) <= MAX_CHAT_LOG_CHARS:
-        raw = provider_fn(USER_PROMPT_TEMPLATE.format(chat_log=full_log))
-        return json.loads(_strip_code_fences(raw))
+        raw, usage = provider_fn(_build_prompt(full_log))
+        if usage:
+            usage["purpose"] = "summary"
+            all_usage.append(usage)
+        parsed = json.loads(_strip_code_fences(raw))
+        parsed["token_usage"] = all_usage
+        return parsed
 
     # Slow path: chunked summarization
     # Reserve half the budget for the most recent messages
@@ -189,8 +234,11 @@ def summarize_chat(messages: list[dict]) -> dict:
         for idx, chunk in enumerate(chunks):
             chunk_text = "\n".join(chunk)
             prompt = f"以下のチャットログを要約してください:\n\n{chunk_text}"
-            summary = provider_fn(prompt, system=CHUNK_SUMMARY_PROMPT)
-            chunk_summaries.append(summary.strip())
+            summary_text, usage = provider_fn(prompt, system=CHUNK_SUMMARY_PROMPT)
+            if usage:
+                usage["purpose"] = "chunk_summary"
+                all_usage.append(usage)
+            chunk_summaries.append(summary_text.strip())
             logger.info("Chunk %d/%d summarized.", idx + 1, len(chunks))
 
     # Build final prompt with condensed older context + recent verbatim
@@ -202,5 +250,10 @@ def summarize_chat(messages: list[dict]) -> dict:
         f"【直近の会話（原文）】\n{recent_block}"
     )
 
-    raw = provider_fn(USER_PROMPT_TEMPLATE.format(chat_log=final_chat_log))
-    return json.loads(_strip_code_fences(raw))
+    raw, usage = provider_fn(_build_prompt(final_chat_log))
+    if usage:
+        usage["purpose"] = "summary"
+        all_usage.append(usage)
+    parsed = json.loads(_strip_code_fences(raw))
+    parsed["token_usage"] = all_usage
+    return parsed

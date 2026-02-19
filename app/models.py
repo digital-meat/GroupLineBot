@@ -48,3 +48,18 @@ class Summary(Base):
     message_from_id: Mapped[int] = mapped_column(Integer)  # oldest message.id covered
     message_to_id: Mapped[int] = mapped_column(Integer)  # newest message.id covered
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class TokenUsage(Base):
+    """Tracks LLM token usage per call."""
+
+    __tablename__ = "token_usage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(String(16))  # gemini / claude
+    model: Mapped[str] = mapped_column(String(64))
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    purpose: Mapped[str] = mapped_column(String(32))  # summary / chunk_summary
+    group_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>トークン使用量</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #333; padding: 16px; max-width: 700px; margin: 0 auto; }
+  h1 { font-size: 1.3rem; margin-bottom: 4px; }
+  .subtitle { font-size: 0.85rem; color: #888; margin-bottom: 16px; }
+  .summary-cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 20px; }
+  .card { background: #fff; border-radius: 8px; padding: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); text-align: center; }
+  .card .value { font-size: 1.4rem; font-weight: 700; color: #2c3e50; }
+  .card .label { font-size: 0.75rem; color: #888; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  th { background: #2c3e50; color: #fff; font-size: 0.8rem; padding: 10px 8px; text-align: left; }
+  td { padding: 8px; font-size: 0.85rem; border-bottom: 1px solid #eee; }
+  tr:last-child td { border-bottom: none; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .provider { font-size: 0.7rem; background: #ecf0f1; padding: 2px 6px; border-radius: 4px; }
+  .provider.gemini { background: #e8f5e9; color: #2e7d32; }
+  .provider.claude { background: #fff3e0; color: #e65100; }
+  .empty { text-align: center; color: #999; margin-top: 40px; font-size: 0.95rem; }
+  .loading { text-align: center; color: #999; margin-top: 40px; }
+  .bar-chart { margin-bottom: 20px; }
+  .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .bar-label { font-size: 0.75rem; width: 60px; text-align: right; flex-shrink: 0; color: #666; }
+  .bar-track { flex: 1; height: 20px; background: #ecf0f1; border-radius: 4px; overflow: hidden; display: flex; }
+  .bar-fill-in { background: #3498db; height: 100%; transition: width 0.3s; }
+  .bar-fill-out { background: #e74c3c; height: 100%; transition: width 0.3s; }
+  .bar-value { font-size: 0.7rem; width: 80px; color: #888; flex-shrink: 0; }
+  .legend { display: flex; gap: 16px; font-size: 0.75rem; color: #666; margin-bottom: 8px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  .legend .l-in::before { background: #3498db; }
+  .legend .l-out::before { background: #e74c3c; }
+</style>
+</head>
+<body>
+
+<h1>トークン使用量</h1>
+<p class="subtitle">LLM API の日別使用状況</p>
+
+<div class="summary-cards" id="summary-cards">
+  <div class="card"><div class="value" id="total-calls">-</div><div class="label">総コール数</div></div>
+  <div class="card"><div class="value" id="total-input">-</div><div class="label">入力トークン</div></div>
+  <div class="card"><div class="value" id="total-output">-</div><div class="label">出力トークン</div></div>
+</div>
+
+<div class="legend"><span class="l-in">入力</span><span class="l-out">出力</span></div>
+<div class="bar-chart" id="bar-chart"></div>
+
+<table>
+  <thead><tr><th>日付</th><th>プロバイダ</th><th class="num">入力</th><th class="num">出力</th><th class="num">コール</th></tr></thead>
+  <tbody id="table-body"><tr><td colspan="5" class="loading">読み込み中...</td></tr></tbody>
+</table>
+
+<script>
+function fmt(n) {
+  return n.toLocaleString("ja-JP");
+}
+
+async function load() {
+  const res = await fetch("/api/usage?days=30");
+  const data = await res.json();
+
+  if (data.length === 0) {
+    document.getElementById("table-body").innerHTML = '<tr><td colspan="5" class="empty">データなし</td></tr>';
+    document.getElementById("bar-chart").innerHTML = '<div class="empty">まだ使用データがありません</div>';
+    return;
+  }
+
+  // Summary totals
+  let totalCalls = 0, totalIn = 0, totalOut = 0;
+  data.forEach(r => { totalCalls += r.calls; totalIn += r.input_tokens; totalOut += r.output_tokens; });
+  document.getElementById("total-calls").textContent = fmt(totalCalls);
+  document.getElementById("total-input").textContent = fmt(totalIn);
+  document.getElementById("total-output").textContent = fmt(totalOut);
+
+  // Aggregate by date for bar chart
+  const byDate = {};
+  data.forEach(r => {
+    if (!byDate[r.date]) byDate[r.date] = { input: 0, output: 0 };
+    byDate[r.date].input += r.input_tokens;
+    byDate[r.date].output += r.output_tokens;
+  });
+  const dates = Object.keys(byDate).sort();
+  const maxTokens = Math.max(...dates.map(d => byDate[d].input + byDate[d].output), 1);
+
+  const chartEl = document.getElementById("bar-chart");
+  chartEl.innerHTML = dates.map(d => {
+    const pctIn = (byDate[d].input / maxTokens * 100).toFixed(1);
+    const pctOut = (byDate[d].output / maxTokens * 100).toFixed(1);
+    const label = d.slice(5); // MM-DD
+    return `<div class="bar-row">
+      <div class="bar-label">${label}</div>
+      <div class="bar-track">
+        <div class="bar-fill-in" style="width:${pctIn}%"></div>
+        <div class="bar-fill-out" style="width:${pctOut}%"></div>
+      </div>
+      <div class="bar-value">${fmt(byDate[d].input + byDate[d].output)}</div>
+    </div>`;
+  }).join("");
+
+  // Table
+  document.getElementById("table-body").innerHTML = data.map(r => {
+    const provClass = r.provider === "gemini" ? "gemini" : "claude";
+    return `<tr>
+      <td>${r.date}</td>
+      <td><span class="provider ${provClass}">${r.provider} / ${r.model}</span></td>
+      <td class="num">${fmt(r.input_tokens)}</td>
+      <td class="num">${fmt(r.output_tokens)}</td>
+      <td class="num">${r.calls}</td>
+    </tr>`;
+  }).join("");
+}
+
+load();
+</script>
+</body>
+</html>

@@ -12,12 +12,12 @@ from linebot.v3.webhooks import (
     TextMessageContent,
 )
 from linebot.v3.webhook import WebhookParser
-from sqlalchemy import delete, select
+from sqlalchemy import cast, delete, func, select, Date
 
 from app.config import APP_URL, LINE_CHANNEL_SECRET, SUMMARY_MESSAGE_LIMIT
 from app.database import async_session, init_db
 from app.line_client import get_api, get_display_name, reply_text
-from app.models import Message, Summary, Task
+from app.models import Message, Summary, Task, TokenUsage
 from app.summarizer import summarize_chat
 
 logging.basicConfig(level=logging.INFO)
@@ -27,16 +27,13 @@ parser = WebhookParser(LINE_CHANNEL_SECRET)
 
 app = FastAPI(title="GroupLineBot")
 
-_tasks_html_cache: str | None = None
+_html_cache: dict[str, str] = {}
 
 
-def _get_tasks_html() -> str:
-    global _tasks_html_cache
-    if _tasks_html_cache is None:
-        _tasks_html_cache = (Path(__file__).parent / "tasks_page.html").read_text(
-            encoding="utf-8"
-        )
-    return _tasks_html_cache
+def _get_html(name: str) -> str:
+    if name not in _html_cache:
+        _html_cache[name] = (Path(__file__).parent / name).read_text(encoding="utf-8")
+    return _html_cache[name]
 
 
 # ---------------------------------------------------------------------------
@@ -121,13 +118,13 @@ async def cmd_summary(api, event: MessageEvent, group_id: str):
     async with async_session() as session:
         # Find the latest summary so we only summarize new messages
         last_summary_stmt = (
-            select(Summary.message_to_id)
+            select(Summary)
             .where(Summary.group_id == group_id)
             .order_by(Summary.id.desc())
             .limit(1)
         )
         last_summary_result = await session.execute(last_summary_stmt)
-        last_message_id = last_summary_result.scalar_one_or_none()
+        last_summary = last_summary_result.scalar_one_or_none()
 
         stmt = (
             select(Message)
@@ -135,8 +132,8 @@ async def cmd_summary(api, event: MessageEvent, group_id: str):
             .where(Message.message_type == "text")
             .where(Message.content.isnot(None))
         )
-        if last_message_id is not None:
-            stmt = stmt.where(Message.id > last_message_id)
+        if last_summary is not None:
+            stmt = stmt.where(Message.id > last_summary.message_to_id)
         stmt = stmt.order_by(Message.id.desc()).limit(SUMMARY_MESSAGE_LIMIT)
 
         result = await session.execute(stmt)
@@ -145,6 +142,8 @@ async def cmd_summary(api, event: MessageEvent, group_id: str):
     if not rows:
         reply_text(api, event, "新しいメッセージがありません（前回の要約以降）。")
         return
+
+    previous_summary_text = last_summary.content if last_summary else None
 
     rows = list(reversed(rows))  # chronological order
 
@@ -159,7 +158,7 @@ async def cmd_summary(api, event: MessageEvent, group_id: str):
     ]
 
     try:
-        result = summarize_chat(messages)
+        result = summarize_chat(messages, previous_summary=previous_summary_text)
     except Exception as e:
         logger.exception("Summarization failed")
         reply_text(api, event, f"要約に失敗しました: {e}")
@@ -184,6 +183,18 @@ async def cmd_summary(api, event: MessageEvent, group_id: str):
             message_to_id=rows[-1].id,
         )
         session.add(summary_record)
+
+        # Save token usage
+        for u in result.get("token_usage", []):
+            session.add(TokenUsage(
+                provider=u.get("provider", ""),
+                model=u.get("model", ""),
+                input_tokens=u.get("input_tokens", 0),
+                output_tokens=u.get("output_tokens", 0),
+                purpose=u.get("purpose", "summary"),
+                group_id=group_id,
+            ))
+
         await session.commit()
 
     # Build response
@@ -376,7 +387,51 @@ async def api_delete_all_tasks(group_id: str = Query(...)):
 @app.get("/tasks/view", response_class=HTMLResponse)
 async def tasks_page(group_id: str = Query(...)):
     await init_db()
-    return _get_tasks_html()
+    return _get_html("tasks_page.html")
+
+
+# ---------------------------------------------------------------------------
+# REST API – Token usage monitoring
+# ---------------------------------------------------------------------------
+@app.get("/api/usage")
+async def api_token_usage(days: int = Query(default=30, le=90)):
+    await init_db()
+    async with async_session() as session:
+        stmt = (
+            select(
+                cast(TokenUsage.created_at, Date).label("date"),
+                TokenUsage.provider,
+                TokenUsage.model,
+                func.sum(TokenUsage.input_tokens).label("input_tokens"),
+                func.sum(TokenUsage.output_tokens).label("output_tokens"),
+                func.count().label("calls"),
+            )
+            .group_by("date", TokenUsage.provider, TokenUsage.model)
+            .order_by(cast(TokenUsage.created_at, Date).desc())
+            .limit(days * 5)  # generous limit for multiple models per day
+        )
+        result = await session.execute(stmt)
+        rows = result.all()
+    return [
+        {
+            "date": str(r.date),
+            "provider": r.provider,
+            "model": r.model,
+            "input_tokens": r.input_tokens,
+            "output_tokens": r.output_tokens,
+            "calls": r.calls,
+        }
+        for r in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Web UI – Token usage dashboard
+# ---------------------------------------------------------------------------
+@app.get("/usage", response_class=HTMLResponse)
+async def usage_page():
+    await init_db()
+    return _get_html("usage_page.html")
 
 
 # ---------------------------------------------------------------------------
