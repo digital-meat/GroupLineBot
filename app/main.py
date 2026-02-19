@@ -70,14 +70,13 @@ async def handle_message(api, event: MessageEvent):
     if not group_id:
         return  # Only handle group messages
 
+    # Only handle text messages – skip images, videos, stickers, etc.
+    if not isinstance(event.message, TextMessageContent):
+        return
+
     user_id = event.source.user_id or "unknown"
     display_name = await get_display_name(api, group_id, user_id)
-
-    # Determine message content
-    msg_type = event.message.type
-    content = None
-    if isinstance(event.message, TextMessageContent):
-        content = event.message.text
+    content = event.message.text
 
     # Store message
     async with async_session() as session:
@@ -85,7 +84,7 @@ async def handle_message(api, event: MessageEvent):
             group_id=group_id,
             user_id=user_id,
             display_name=display_name,
-            message_type=msg_type,
+            message_type="text",
             content=content,
             line_message_id=event.message.id,
         )

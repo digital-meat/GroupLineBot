@@ -4,7 +4,7 @@
 
 ## 機能
 
-- **メッセージ保存**: グループ内の全テキストメッセージをDBに保存
+- **メッセージ保存**: グループ内の全テキストメッセージをDBに保存（画像・動画・スタンプは無視）
 - **チャット要約**: `要約して` or `/summary` で直近のチャットをLLMが要約
 - **タスク抽出**: 要約時にチャットからTODO/タスクを自動抽出して別テーブルに保存
 - **タスク管理**: `/tasks` で未完了タスク一覧、`/done [番号]` で完了マーク
@@ -17,7 +17,7 @@
 | `タスク一覧` `/tasks` `/タスク` | 未完了タスクを表示 |
 | `/done [番号]` | タスクを完了にする |
 
-## セットアップ
+## デプロイ (Vercel)
 
 ### 1. LINE公式アカウント作成
 
@@ -25,30 +25,53 @@
 2. Messaging API チャネルを作成
 3. チャネルシークレットとチャネルアクセストークンを取得
 
-### 2. 環境変数設定
+### 2. Vercel Postgres セットアップ
+
+1. Vercel ダッシュボードで Storage → Create Database → Postgres
+2. 接続文字列を取得
+
+### 3. デプロイ
 
 ```bash
-cp .env.example .env
-# .env を編集して各種キーを設定
-```
+# Vercel CLIでデプロイ
+npm i -g vercel
+vercel
 
-### 3. インストール & 起動
+# 環境変数を設定
+vercel env add LINE_CHANNEL_SECRET
+vercel env add LINE_CHANNEL_ACCESS_TOKEN
+vercel env add ANTHROPIC_API_KEY
+vercel env add DATABASE_URL   # postgresql+asyncpg://... 形式
 
-```bash
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+# 本番デプロイ
+vercel --prod
 ```
 
 ### 4. Webhook設定
 
 LINE Developers ConsoleでWebhook URLを設定:
 ```
-https://your-domain.com/callback
+https://your-project.vercel.app/callback
 ```
 
-ngrokでローカル開発する場合:
+### 5. DBテーブル作成
+
+初回アクセス時（`/health` を叩く）に自動でテーブルが作成されます。
+
+## ローカル開発
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env
+# .env を編集
+
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+ngrokでWebhookを公開:
 ```bash
 ngrok http 8000
 ```
@@ -56,6 +79,7 @@ ngrok http 8000
 ## 技術スタック
 
 - **Python** + **FastAPI**
-- **SQLAlchemy** (async) + **SQLite**
+- **SQLAlchemy** (async) + **PostgreSQL** (asyncpg)
 - **LINE Messaging API** (SDK v3)
 - **Anthropic Claude API** (要約 & タスク抽出)
+- **Vercel** (サーバーレスデプロイ)
