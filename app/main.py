@@ -1,8 +1,10 @@
 """GroupLineBot – LINE group chat summarizer powered by LLM."""
 
 import logging
+from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.webhooks import (
     JoinEvent,
@@ -12,7 +14,7 @@ from linebot.v3.webhooks import (
 from linebot.v3.webhook import WebhookParser
 from sqlalchemy import delete, select
 
-from app.config import LINE_CHANNEL_SECRET, SUMMARY_MESSAGE_LIMIT
+from app.config import APP_URL, LINE_CHANNEL_SECRET, SUMMARY_MESSAGE_LIMIT
 from app.database import async_session, init_db
 from app.line_client import get_api, get_display_name, reply_text
 from app.models import Message, Summary, Task
@@ -24,6 +26,8 @@ logger = logging.getLogger(__name__)
 parser = WebhookParser(LINE_CHANNEL_SECRET)
 
 app = FastAPI(title="GroupLineBot")
+
+TASKS_HTML = (Path(__file__).parent / "tasks_page.html").read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +173,8 @@ async def cmd_summary(api, event: MessageEvent, group_id: str):
             assignee = f" (@{t['assignee']})" if t.get("assignee") else ""
             text += f"\n{i}. {t['title']}{assignee}"
         text += "\n\n✅ タスクを完了するには: /done [番号]"
+        if APP_URL:
+            text += f"\n🌐 Web管理: {APP_URL}/tasks/view?group_id={group_id}"
 
     reply_text(api, event, text)
 
@@ -197,6 +203,8 @@ async def cmd_tasks(api, event: MessageEvent, group_id: str):
         assignee = f" (@{t.assignee})" if t.assignee else ""
         text += f"\n#{t.id} {t.title}{assignee}"
     text += "\n\n✅ 完了するには: /done [番号]"
+    if APP_URL:
+        text += f"\n🌐 Web管理: {APP_URL}/tasks/view?group_id={group_id}"
 
     reply_text(api, event, text)
 
@@ -273,6 +281,81 @@ async def cmd_clear_all(api, event: MessageEvent, group_id: str):
         f"  タスク: {r_task.rowcount} 件\n"
         f"  要約: {r_sum.rowcount} 件",
     )
+
+
+# ---------------------------------------------------------------------------
+# REST API – Task management for web UI
+# ---------------------------------------------------------------------------
+@app.get("/api/tasks")
+async def api_list_tasks(group_id: str = Query(...)):
+    await init_db()
+    async with async_session() as session:
+        stmt = (
+            select(Task)
+            .where(Task.group_id == group_id)
+            .order_by(Task.status.asc(), Task.created_at.desc())
+        )
+        result = await session.execute(stmt)
+        tasks = result.scalars().all()
+    return [
+        {
+            "id": t.id,
+            "title": t.title,
+            "assignee": t.assignee,
+            "status": t.status,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+        }
+        for t in tasks
+    ]
+
+
+@app.patch("/api/tasks/{task_id}")
+async def api_update_task(task_id: int, request: Request):
+    await init_db()
+    body = await request.json()
+    async with async_session() as session:
+        stmt = select(Task).where(Task.id == task_id)
+        result = await session.execute(stmt)
+        task = result.scalar_one_or_none()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if "status" in body:
+            task.status = body["status"]
+        await session.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/tasks/{task_id}")
+async def api_delete_task(task_id: int):
+    await init_db()
+    async with async_session() as session:
+        result = await session.execute(
+            delete(Task).where(Task.id == task_id)
+        )
+        await session.commit()
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"ok": True}
+
+
+@app.delete("/api/tasks")
+async def api_delete_all_tasks(group_id: str = Query(...)):
+    await init_db()
+    async with async_session() as session:
+        result = await session.execute(
+            delete(Task).where(Task.group_id == group_id)
+        )
+        await session.commit()
+    return {"ok": True, "deleted": result.rowcount}
+
+
+# ---------------------------------------------------------------------------
+# Web UI – Task board
+# ---------------------------------------------------------------------------
+@app.get("/tasks/view", response_class=HTMLResponse)
+async def tasks_page(group_id: str = Query(...)):
+    await init_db()
+    return TASKS_HTML
 
 
 # ---------------------------------------------------------------------------
