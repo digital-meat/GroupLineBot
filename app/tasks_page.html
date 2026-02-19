@@ -22,6 +22,10 @@
   .task-meta { font-size: 0.75rem; color: #888; margin-top: 2px; }
   .task-delete { background: none; border: none; cursor: pointer; font-size: 1.1rem; color: #ccc; padding: 4px; }
   .task-delete:hover { color: #e74c3c; }
+  .add-form { display: flex; gap: 8px; margin-bottom: 16px; }
+  .add-form input { flex: 1; padding: 8px 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 0.9rem; }
+  .add-form button { padding: 8px 16px; border: none; border-radius: 8px; background: #2c3e50; color: #fff; font-size: 0.85rem; cursor: pointer; flex-shrink: 0; }
+  .add-form button:hover { background: #1a252f; }
   .empty { text-align: center; color: #999; margin-top: 40px; font-size: 0.95rem; }
   .loading { text-align: center; color: #999; margin-top: 40px; }
 </style>
@@ -37,6 +41,11 @@
     <button data-filter="all">すべて</button>
   </div>
 </div>
+
+<form class="add-form" id="add-form">
+  <input type="text" id="new-task" placeholder="新しいタスクを入力..." autocomplete="off">
+  <button type="submit">追加</button>
+</form>
 
 <ul class="task-list" id="task-list">
   <li class="loading">読み込み中...</li>
@@ -72,6 +81,17 @@ async function toggleTask(id, currentStatus) {
 async function deleteTask(id) {
   await fetch(`/api/tasks/${id}`, { method: "DELETE" });
   allTasks = allTasks.filter(t => t.id !== id);
+  render();
+}
+
+async function addTask(title) {
+  const res = await fetch("/api/tasks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ group_id: groupId, title }),
+  });
+  const task = await res.json();
+  allTasks.unshift(task);
   render();
 }
 
@@ -118,6 +138,16 @@ document.querySelectorAll(".filter-btns button").forEach(btn => {
     currentFilter = btn.dataset.filter;
     render();
   });
+});
+
+// --- Add form ---
+document.getElementById("add-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = document.getElementById("new-task");
+  const title = input.value.trim();
+  if (!title) return;
+  input.value = "";
+  await addTask(title);
 });
 
 // --- Init ---

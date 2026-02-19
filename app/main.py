@@ -318,6 +318,32 @@ async def cmd_clear_all(api, event: MessageEvent, group_id: str):
 # ---------------------------------------------------------------------------
 # REST API – Task management for web UI
 # ---------------------------------------------------------------------------
+@app.post("/api/tasks")
+async def api_create_task(request: Request):
+    await init_db()
+    body = await request.json()
+    group_id = body.get("group_id")
+    title = (body.get("title") or "").strip()
+    if not group_id or not title:
+        raise HTTPException(status_code=400, detail="group_id and title are required")
+    async with async_session() as session:
+        task = Task(
+            group_id=group_id,
+            title=title,
+            assignee=body.get("assignee"),
+        )
+        session.add(task)
+        await session.commit()
+        await session.refresh(task)
+    return {
+        "id": task.id,
+        "title": task.title,
+        "assignee": task.assignee,
+        "status": task.status,
+        "created_at": task.created_at.isoformat() if task.created_at else None,
+    }
+
+
 @app.get("/api/tasks")
 async def api_list_tasks(group_id: str = Query(...)):
     await init_db()
