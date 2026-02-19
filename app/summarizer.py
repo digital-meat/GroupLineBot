@@ -61,7 +61,7 @@ def _call_gemini(chat_log: str) -> str:
 
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel(
-        model_name="gemini-2.0-flash",
+        model_name="gemini-2.5-flash",
         system_instruction=SUMMARY_SYSTEM_PROMPT,
     )
     response = model.generate_content(
