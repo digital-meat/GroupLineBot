@@ -10,8 +10,6 @@
   h1 { font-size: 1.3rem; margin-bottom: 12px; }
   .toolbar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
   .toolbar button { padding: 6px 14px; border: none; border-radius: 6px; font-size: 0.85rem; cursor: pointer; }
-  .btn-danger { background: #e74c3c; color: #fff; }
-  .btn-danger:hover { background: #c0392b; }
   .filter-btns button { padding: 4px 12px; border: 1px solid #ccc; border-radius: 16px; background: #fff; font-size: 0.8rem; cursor: pointer; }
   .filter-btns button.active { background: #2c3e50; color: #fff; border-color: #2c3e50; }
   .task-list { list-style: none; }
@@ -38,7 +36,6 @@
     <button data-filter="done">完了済み</button>
     <button data-filter="all">すべて</button>
   </div>
-  <button class="btn-danger" id="clear-all-btn">全削除</button>
 </div>
 
 <ul class="task-list" id="task-list">
@@ -75,13 +72,6 @@ async function toggleTask(id, currentStatus) {
 async function deleteTask(id) {
   await fetch(`/api/tasks/${id}`, { method: "DELETE" });
   allTasks = allTasks.filter(t => t.id !== id);
-  render();
-}
-
-async function clearAll() {
-  if (!confirm("全タスクを削除しますか？")) return;
-  await fetch(`/api/tasks?group_id=${encodeURIComponent(groupId)}`, { method: "DELETE" });
-  allTasks = [];
   render();
 }
 
@@ -129,8 +119,6 @@ document.querySelectorAll(".filter-btns button").forEach(btn => {
     render();
   });
 });
-
-document.getElementById("clear-all-btn").addEventListener("click", clearAll);
 
 // --- Init ---
 if (groupId) fetchTasks();
