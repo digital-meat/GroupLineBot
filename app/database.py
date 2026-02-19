@@ -3,7 +3,10 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import DATABASE_URL
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+# asyncpg doesn't understand sslmode/channel_binding params; strip and pass ssl=True
+_url = DATABASE_URL.replace("?sslmode=require", "").replace("&sslmode=require", "")
+_url = _url.replace("?channel_binding=require", "").replace("&channel_binding=require", "")
+engine = create_async_engine(_url, echo=False, connect_args={"ssl": True})
 async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
