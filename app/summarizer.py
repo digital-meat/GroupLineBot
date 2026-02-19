@@ -1,6 +1,7 @@
 """LLM-powered chat summarizer with pluggable provider (Gemini / Claude)."""
 
 import json
+import os
 
 from app.config import ANTHROPIC_API_KEY, GEMINI_API_KEY, LLM_PROVIDER
 
@@ -30,15 +31,37 @@ SUMMARY_SYSTEM_PROMPT = """\
 USER_PROMPT_TEMPLATE = "以下のチャットログを要約してください:\n\n{chat_log}"
 
 
+MAX_CHAT_LOG_CHARS = int(os.getenv("MAX_CHAT_LOG_CHARS", "60000"))
+
+
 def build_chat_log(messages: list[dict]) -> str:
-    """Format DB messages into a readable chat log for the LLM."""
+    """Format DB messages into a readable chat log for the LLM.
+
+    If the total log exceeds MAX_CHAT_LOG_CHARS, older messages are
+    dropped so that the most recent conversation is always included.
+    """
     lines: list[str] = []
     for m in messages:
         ts = m["timestamp"].strftime("%m/%d %H:%M")
         name = m["display_name"]
         content = m["content"] or f"[{m['message_type']}]"
         lines.append(f"[{ts}] {name}: {content}")
-    return "\n".join(lines)
+
+    full = "\n".join(lines)
+    if len(full) <= MAX_CHAT_LOG_CHARS:
+        return full
+
+    # Keep the most recent messages that fit within the limit
+    truncated: list[str] = []
+    total = 0
+    for line in reversed(lines):
+        # +1 for the newline separator
+        if total + len(line) + 1 > MAX_CHAT_LOG_CHARS:
+            break
+        truncated.append(line)
+        total += len(line) + 1
+    truncated.reverse()
+    return f"（※ 古いメッセージは省略されています）\n" + "\n".join(truncated)
 
 
 def _strip_code_fences(raw: str) -> str:
