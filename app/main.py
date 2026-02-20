@@ -96,7 +96,8 @@ async def handle_message(api, event: MessageEvent):
 
     # Check for bot commands
     if content:
-        cmd = content.strip()
+        cmd = content.strip().strip("\u3000")
+        logger.info("Received cmd=%r from group=%s", cmd, group_id)
         if cmd in ("/summary", "要約して", "/まとめ"):
             await cmd_summary(api, event, group_id)
         elif cmd in ("/tasks", "タスク一覧", "/タスク"):
