@@ -97,6 +97,49 @@ def _strip_code_fences(raw: str) -> str:
     return raw
 
 
+def _parse_llm_json(raw: str) -> dict:
+    """Best-effort JSON parse from LLM output.
+
+    LLMs sometimes return truncated or malformed JSON.  We try
+    progressively more lenient strategies before giving up.
+    """
+    cleaned = _strip_code_fences(raw)
+
+    # 1. Direct parse
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Extract the first { ... } block (greedy)
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end > start:
+        try:
+            return json.loads(cleaned[start : end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    # 3. Truncated JSON – try closing open strings / arrays / objects
+    if start != -1:
+        fragment = cleaned[start:]
+        # Close unterminated string
+        if fragment.count('"') % 2 == 1:
+            fragment += '"'
+        # Close open arrays / objects
+        for ch in ("]", "}"):
+            while fragment.count(ch) < fragment.count("{" if ch == "}" else "["):
+                fragment += ch
+        try:
+            return json.loads(fragment)
+        except json.JSONDecodeError:
+            pass
+
+    # 4. Give up – return just the summary text so the bot still replies
+    logger.warning("Could not parse LLM JSON, returning raw text as summary")
+    return {"summary": raw.strip(), "tasks": []}
+
+
 # ---------------------------------------------------------------------------
 # Gemini provider
 # ---------------------------------------------------------------------------
@@ -199,7 +242,7 @@ def summarize_chat(
         if usage:
             usage["purpose"] = "summary"
             all_usage.append(usage)
-        parsed = json.loads(_strip_code_fences(raw))
+        parsed = _parse_llm_json(raw)
         parsed["token_usage"] = all_usage
         return parsed
 
@@ -254,6 +297,6 @@ def summarize_chat(
     if usage:
         usage["purpose"] = "summary"
         all_usage.append(usage)
-    parsed = json.loads(_strip_code_fences(raw))
+    parsed = _parse_llm_json(raw)
     parsed["token_usage"] = all_usage
     return parsed
