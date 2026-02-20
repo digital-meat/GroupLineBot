@@ -1,6 +1,7 @@
 """GroupLineBot – LINE group chat summarizer powered by LLM."""
 
 import logging
+import random
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -16,7 +17,13 @@ from linebot.v3.webhooks import (
 from linebot.v3.webhook import WebhookParser
 from sqlalchemy import cast, delete, func, select, Date
 
-from app.config import APP_URL, LINE_CHANNEL_SECRET, SUMMARY_MESSAGE_LIMIT
+from app.config import (
+    APP_URL,
+    DATA_RETENTION_DAYS,
+    LINE_CHANNEL_SECRET,
+    MESSAGE_RETENTION_COUNT,
+    SUMMARY_MESSAGE_LIMIT,
+)
 from app.database import async_session, init_db
 from app.line_client import get_api, get_display_name, reply_text
 from app.models import Message, Summary, Task, TokenUsage
@@ -65,6 +72,70 @@ async def callback(
             await handle_message(api, event)
 
     return "OK"
+
+
+# ---------------------------------------------------------------------------
+# Data retention – automatic pruning
+# ---------------------------------------------------------------------------
+
+async def _prune_old_data(group_id: str) -> None:
+    """Delete old messages/summaries/token_usage to cap DB size.
+
+    Called probabilistically (~10% of message inserts) to avoid
+    running expensive DELETEs on every single request.
+    """
+    async with async_session() as session:
+        # 1) Messages: keep only the latest MESSAGE_RETENTION_COUNT per group
+        if MESSAGE_RETENTION_COUNT > 0:
+            # Find the id threshold: keep rows with id >= cutoff
+            cutoff_stmt = (
+                select(Message.id)
+                .where(Message.group_id == group_id)
+                .order_by(Message.id.desc())
+                .offset(MESSAGE_RETENTION_COUNT)
+                .limit(1)
+            )
+            cutoff_result = await session.execute(cutoff_stmt)
+            cutoff_id = cutoff_result.scalar_one_or_none()
+            if cutoff_id is not None:
+                del_msg = await session.execute(
+                    delete(Message)
+                    .where(Message.group_id == group_id)
+                    .where(Message.id <= cutoff_id)
+                )
+                if del_msg.rowcount:
+                    logger.info(
+                        "Pruned %d old messages for group %s",
+                        del_msg.rowcount, group_id,
+                    )
+
+        # 2) Summaries & token_usage: delete records older than DATA_RETENTION_DAYS
+        if DATA_RETENTION_DAYS > 0:
+            cutoff_date = datetime.utcnow() - timedelta(days=DATA_RETENTION_DAYS)
+
+            del_sum = await session.execute(
+                delete(Summary)
+                .where(Summary.group_id == group_id)
+                .where(Summary.created_at < cutoff_date)
+            )
+            if del_sum.rowcount:
+                logger.info(
+                    "Pruned %d old summaries for group %s",
+                    del_sum.rowcount, group_id,
+                )
+
+            del_usage = await session.execute(
+                delete(TokenUsage)
+                .where(TokenUsage.group_id == group_id)
+                .where(TokenUsage.created_at < cutoff_date)
+            )
+            if del_usage.rowcount:
+                logger.info(
+                    "Pruned %d old token_usage records for group %s",
+                    del_usage.rowcount, group_id,
+                )
+
+        await session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +223,13 @@ async def handle_message(api, event: MessageEvent):
         )
         session.add(msg)
         await session.commit()
+
+    # Probabilistic pruning (~10% of inserts) to cap DB size
+    if random.random() < 0.1:
+        try:
+            await _prune_old_data(group_id)
+        except Exception:
+            logger.exception("Pruning failed for group %s", group_id)
 
     # Check for bot commands
     if content:
