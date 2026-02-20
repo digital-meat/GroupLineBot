@@ -211,8 +211,9 @@ async def cmd_summary(
             .where(Message.content.isnot(None))
         )
         if time_specified:
-            # Time-based filter: ignore previous summary boundary
-            stmt = stmt.where(Message.timestamp >= since)
+            # DB stores naive UTC timestamps; convert aware JST → naive UTC
+            since_utc = since.astimezone(timezone.utc).replace(tzinfo=None)
+            stmt = stmt.where(Message.timestamp >= since_utc)
         elif last_summary is not None:
             stmt = stmt.where(Message.id > last_summary.message_to_id)
         stmt = stmt.order_by(Message.id.desc()).limit(SUMMARY_MESSAGE_LIMIT)
