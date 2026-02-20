@@ -144,7 +144,27 @@ def _parse_llm_json(raw: str) -> dict:
 # Gemini provider
 # ---------------------------------------------------------------------------
 
-def _call_gemini(prompt: str, system: str = SUMMARY_SYSTEM_PROMPT) -> tuple[str, dict]:
+_SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "tasks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "assignee": {"type": "string", "nullable": True},
+                },
+                "required": ["title"],
+            },
+        },
+    },
+    "required": ["summary", "tasks"],
+}
+
+
+def _call_gemini(prompt: str, system: str = SUMMARY_SYSTEM_PROMPT, *, json_mode: bool = False) -> tuple[str, dict]:
     import google.generativeai as genai
 
     genai.configure(api_key=GEMINI_API_KEY)
@@ -152,9 +172,13 @@ def _call_gemini(prompt: str, system: str = SUMMARY_SYSTEM_PROMPT) -> tuple[str,
         model_name="gemini-2.5-flash",
         system_instruction=system,
     )
+    gen_config = {"max_output_tokens": 2048}
+    if json_mode:
+        gen_config["response_mime_type"] = "application/json"
+        gen_config["response_schema"] = _SUMMARY_SCHEMA
     response = model.generate_content(
         prompt,
-        generation_config=genai.types.GenerationConfig(max_output_tokens=2048),
+        generation_config=genai.types.GenerationConfig(**gen_config),
     )
     usage = {}
     if hasattr(response, "usage_metadata") and response.usage_metadata:
@@ -172,7 +196,7 @@ def _call_gemini(prompt: str, system: str = SUMMARY_SYSTEM_PROMPT) -> tuple[str,
 # Claude provider
 # ---------------------------------------------------------------------------
 
-def _call_claude(prompt: str, system: str = SUMMARY_SYSTEM_PROMPT) -> tuple[str, dict]:
+def _call_claude(prompt: str, system: str = SUMMARY_SYSTEM_PROMPT, *, json_mode: bool = False) -> tuple[str, dict]:
     import anthropic
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -238,7 +262,7 @@ def summarize_chat(
 
     # Fast path: fits in a single call
     if len(full_log) <= MAX_CHAT_LOG_CHARS:
-        raw, usage = provider_fn(_build_prompt(full_log))
+        raw, usage = provider_fn(_build_prompt(full_log), json_mode=True)
         if usage:
             usage["purpose"] = "summary"
             all_usage.append(usage)
@@ -293,7 +317,7 @@ def summarize_chat(
         f"【直近の会話（原文）】\n{recent_block}"
     )
 
-    raw, usage = provider_fn(_build_prompt(final_chat_log))
+    raw, usage = provider_fn(_build_prompt(final_chat_log), json_mode=True)
     if usage:
         usage["purpose"] = "summary"
         all_usage.append(usage)
