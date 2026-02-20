@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.webhooks import (
     JoinEvent,
@@ -199,15 +199,9 @@ async def cmd_summary(api, event: MessageEvent, group_id: str):
         await session.commit()
 
     # Build response
-    text = f"📝 キャッチアップ要約\n{'=' * 20}\n{result['summary']}"
-    if result.get("tasks"):
-        text += f"\n\n📋 抽出されたタスク\n{'=' * 20}"
-        for i, t in enumerate(result["tasks"], 1):
-            assignee = f" (@{t['assignee']})" if t.get("assignee") else ""
-            text += f"\n{i}. {t['title']}{assignee}"
-        text += "\n\n✅ タスクを完了するには: /done [番号]"
-        if APP_URL:
-            text += f"\n🌐 Web管理: {APP_URL}/tasks/view?group_id={group_id}"
+    text = result["summary"]
+    if result.get("tasks") and APP_URL:
+        text += f"\n\nタスク管理: {APP_URL}/tasks/view?group_id={group_id}"
 
     reply_text(api, event, text)
 
@@ -228,16 +222,16 @@ async def cmd_tasks(api, event: MessageEvent, group_id: str):
         tasks = result.scalars().all()
 
     if not tasks:
-        reply_text(api, event, "未完了のタスクはありません 🎉")
+        reply_text(api, event, "未完了のタスクはありません")
         return
 
-    text = "📋 未完了タスク一覧\n" + "=" * 20
+    text = "未完了タスク一覧"
     for t in tasks:
         assignee = f" (@{t.assignee})" if t.assignee else ""
         text += f"\n#{t.id} {t.title}{assignee}"
-    text += "\n\n✅ 完了するには: /done [番号]"
+    text += "\n\n完了するには: /done [番号]"
     if APP_URL:
-        text += f"\n🌐 Web管理: {APP_URL}/tasks/view?group_id={group_id}"
+        text += f"\nタスク管理: {APP_URL}/t?g={group_id}"
 
     reply_text(api, event, text)
 
@@ -411,6 +405,11 @@ async def api_delete_all_tasks(group_id: str = Query(...)):
 # ---------------------------------------------------------------------------
 # Web UI – Task board
 # ---------------------------------------------------------------------------
+@app.get("/t", response_class=RedirectResponse)
+async def tasks_short(g: str = Query(...)):
+    return RedirectResponse(f"/tasks/view?group_id={g}")
+
+
 @app.get("/tasks/view", response_class=HTMLResponse)
 async def tasks_page(group_id: str = Query(...)):
     await init_db()
