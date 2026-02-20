@@ -1,6 +1,8 @@
 """GroupLineBot – LINE group chat summarizer powered by LLM."""
 
 import logging
+import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
@@ -66,6 +68,63 @@ async def callback(
 
 
 # ---------------------------------------------------------------------------
+# Time argument parsing for /summary
+# ---------------------------------------------------------------------------
+JST = timezone(timedelta(hours=9))
+
+# Patterns:
+#   "14:00"          → today at 14:00 JST
+#   "2/19 14:00"     → Feb 19 at 14:00 JST (current year)
+#   "2025/2/19 14:00" → Feb 19 2025 at 14:00 JST
+#   "3時間"          → 3 hours ago
+#   "30分"           → 30 minutes ago
+
+_RE_DURATION = re.compile(r"^(\d+)\s*(時間|分)$")
+_RE_DATE_TIME = re.compile(
+    r"^(?:(\d{4})/)?(\d{1,2})/(\d{1,2})\s+(\d{1,2}):(\d{2})$"
+)
+_RE_TIME_ONLY = re.compile(r"^(\d{1,2}):(\d{2})$")
+
+
+def _parse_time_arg(arg: str) -> datetime | None:
+    """Parse a Japanese-friendly time argument into a JST-aware datetime."""
+    arg = arg.strip()
+    now = datetime.now(JST)
+
+    m = _RE_DURATION.match(arg)
+    if m:
+        val = int(m.group(1))
+        unit = m.group(2)
+        if unit == "時間":
+            return now - timedelta(hours=val)
+        else:  # 分
+            return now - timedelta(minutes=val)
+
+    m = _RE_DATE_TIME.match(arg)
+    if m:
+        year = int(m.group(1)) if m.group(1) else now.year
+        month, day = int(m.group(2)), int(m.group(3))
+        hour, minute = int(m.group(4)), int(m.group(5))
+        try:
+            return datetime(year, month, day, hour, minute, tzinfo=JST)
+        except ValueError:
+            return None
+
+    m = _RE_TIME_ONLY.match(arg)
+    if m:
+        hour, minute = int(m.group(1)), int(m.group(2))
+        try:
+            dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if dt > now:
+                dt -= timedelta(days=1)
+            return dt
+        except ValueError:
+            return None
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Message handler
 # ---------------------------------------------------------------------------
 async def handle_message(api, event: MessageEvent):
@@ -98,8 +157,22 @@ async def handle_message(api, event: MessageEvent):
     if content:
         cmd = content.strip().strip("\u3000")
         logger.info("Received cmd=%r from group=%s", cmd, group_id)
-        if cmd in ("/summary", "要約して", "/まとめ"):
-            await cmd_summary(api, event, group_id)
+        # /summary, /まとめ, 要約して, まとめ – with optional time arg
+        # Accepts: "まとめ3時間", "まとめ 14:00", "/まとめ 2/19 14:00", etc.
+        summary_match = re.match(
+            r"^(/summary|要約して|/?まとめ)[\s　]*(.+)?$", cmd
+        )
+        if summary_match:
+            time_arg = (summary_match.group(2) or "").strip() or None
+            since = _parse_time_arg(time_arg) if time_arg else None
+            if time_arg and since is None:
+                reply_text(
+                    api,
+                    event,
+                    "時刻の形式が不正です。例: まとめ14:00, まとめ3時間, まとめ2/19 14:00",
+                )
+                return
+            await cmd_summary(api, event, group_id, since=since)
         elif cmd in ("/tasks", "タスク一覧", "/タスク"):
             await cmd_tasks(api, event, group_id)
         elif cmd.startswith("/done "):
@@ -115,7 +188,11 @@ async def handle_message(api, event: MessageEvent):
 # ---------------------------------------------------------------------------
 # /summary – Summarize recent chat
 # ---------------------------------------------------------------------------
-async def cmd_summary(api, event: MessageEvent, group_id: str):
+async def cmd_summary(
+    api, event: MessageEvent, group_id: str, *, since: datetime | None = None
+):
+    time_specified = since is not None
+
     async with async_session() as session:
         # Find the latest summary so we only summarize new messages
         last_summary_stmt = (
@@ -133,7 +210,10 @@ async def cmd_summary(api, event: MessageEvent, group_id: str):
             .where(Message.message_type == "text")
             .where(Message.content.isnot(None))
         )
-        if last_summary is not None:
+        if time_specified:
+            # Time-based filter: ignore previous summary boundary
+            stmt = stmt.where(Message.timestamp >= since)
+        elif last_summary is not None:
             stmt = stmt.where(Message.id > last_summary.message_to_id)
         stmt = stmt.order_by(Message.id.desc()).limit(SUMMARY_MESSAGE_LIMIT)
 
@@ -141,10 +221,17 @@ async def cmd_summary(api, event: MessageEvent, group_id: str):
         rows = result.scalars().all()
 
     if not rows:
-        reply_text(api, event, "新しいメッセージがありません（前回の要約以降）。")
+        if time_specified:
+            since_str = since.astimezone(JST).strftime("%-m/%d %H:%M")
+            reply_text(api, event, f"{since_str} 以降のメッセージがありません。")
+        else:
+            reply_text(api, event, "新しいメッセージがありません（前回の要約以降）。")
         return
 
-    previous_summary_text = last_summary.content if last_summary else None
+    # When a time range is specified, don't carry over previous summary context
+    previous_summary_text = (
+        None if time_specified else (last_summary.content if last_summary else None)
+    )
 
     rows = list(reversed(rows))  # chronological order
 
