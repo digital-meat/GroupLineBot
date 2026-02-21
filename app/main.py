@@ -13,6 +13,7 @@ from linebot.v3.webhooks import (
     JoinEvent,
     MessageEvent,
     TextMessageContent,
+    UnsendEvent,
 )
 from linebot.v3.webhook import WebhookParser
 from sqlalchemy import cast, delete, func, select, Date
@@ -68,10 +69,30 @@ async def callback(
         if isinstance(event, JoinEvent):
             logger.info("Bot joined group: %s", event.source.group_id)
 
+        elif isinstance(event, UnsendEvent):
+            await handle_unsend(event)
+
         elif isinstance(event, MessageEvent):
             await handle_message(api, event)
 
     return "OK"
+
+
+# ---------------------------------------------------------------------------
+# Unsend handling – delete message from DB when user unsends
+# ---------------------------------------------------------------------------
+async def handle_unsend(event: UnsendEvent):
+    """Remove the unsent message from the database."""
+    message_id = event.unsend.message_id
+    async with async_session() as session:
+        result = await session.execute(
+            delete(Message).where(Message.line_message_id == str(message_id))
+        )
+        await session.commit()
+        if result.rowcount:
+            logger.info("Deleted unsent message %s", message_id)
+        else:
+            logger.info("Unsent message %s not found in DB (already deleted or not stored)", message_id)
 
 
 # ---------------------------------------------------------------------------
