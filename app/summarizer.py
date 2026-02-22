@@ -131,7 +131,11 @@ def _parse_llm_json(raw: str) -> dict:
             while fragment.count(ch) < fragment.count("{" if ch == "}" else "["):
                 fragment += ch
         try:
-            return json.loads(fragment)
+            result = json.loads(fragment)
+            logger.warning("LLM output was truncated – repaired JSON but summary may be incomplete")
+            if isinstance(result.get("summary"), str):
+                result["summary"] += "\n\n⚠ 要約が途中で切れた可能性があります"
+            return result
         except json.JSONDecodeError:
             pass
 
@@ -172,7 +176,7 @@ def _call_gemini(prompt: str, system: str = SUMMARY_SYSTEM_PROMPT, *, json_mode:
         model_name="gemini-2.5-flash",
         system_instruction=system,
     )
-    gen_config = {"max_output_tokens": 2048}
+    gen_config = {"max_output_tokens": 8192}
     if json_mode:
         gen_config["response_mime_type"] = "application/json"
         gen_config["response_schema"] = _SUMMARY_SCHEMA
@@ -202,7 +206,7 @@ def _call_claude(prompt: str, system: str = SUMMARY_SYSTEM_PROMPT, *, json_mode:
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=2048,
+        max_tokens=8192,
         system=system,
         messages=[{"role": "user", "content": prompt}],
     )
