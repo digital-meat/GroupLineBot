@@ -240,16 +240,19 @@ _PROVIDERS = {
 
 
 def summarize_chat(
-    messages: list[dict], previous_summary: str | None = None
+    messages: list[dict],
+    previous_summary: str | None = None,
+    *,
+    known_members: list[str] | None = None,
+    known_tags: list[str] | None = None,
 ) -> dict:
     """Send chat log to LLM and get back summary + tasks.
 
     If *previous_summary* is given, it is prepended so the LLM can
     extract tasks from broader context without re-summarizing old messages.
 
-    If the chat log is too long for a single call, older messages are
-    summarized in chunks first, and the condensed context is prepended
-    to the most recent messages for the final summary.
+    *known_members* and *known_tags* are passed to the LLM so it picks
+    consistent assignee names and reuses existing tags.
 
     Returns:
         {"summary": str, "tasks": [...], "token_usage": [usage_dict, ...]}
@@ -267,10 +270,22 @@ def summarize_chat(
 
     def _build_prompt(chat_log: str) -> str:
         if previous_summary:
-            return USER_PROMPT_WITH_CONTEXT_TEMPLATE.format(
+            prompt = USER_PROMPT_WITH_CONTEXT_TEMPLATE.format(
                 previous_summary=previous_summary, chat_log=chat_log
             )
-        return USER_PROMPT_TEMPLATE.format(chat_log=chat_log)
+        else:
+            prompt = USER_PROMPT_TEMPLATE.format(chat_log=chat_log)
+        if known_members:
+            prompt += (
+                f"\n\n【グループメンバー一覧】\n{', '.join(known_members)}"
+                "\n※タスクの assignee はこのメンバー名から選んでください。"
+            )
+        if known_tags:
+            prompt += (
+                f"\n\n【既存タグ一覧】\n{', '.join(known_tags)}"
+                "\n※可能な限りこの中からタグを選んでください。新しいタグは本当に必要な場合のみ追加してください。"
+            )
+        return prompt
 
     # Fast path: fits in a single call
     if len(full_log) <= MAX_CHAT_LOG_CHARS:

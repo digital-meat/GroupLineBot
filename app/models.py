@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, Text, func
+from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -49,6 +49,35 @@ class Summary(Base):
     content: Mapped[str] = mapped_column(Text)
     message_from_id: Mapped[int] = mapped_column(Integer)  # oldest message.id covered
     message_to_id: Mapped[int] = mapped_column(Integer)  # newest message.id covered
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class GroupMember(Base):
+    """Known members of a LINE group, auto-tracked from messages."""
+
+    __tablename__ = "group_members"
+    __table_args__ = (
+        UniqueConstraint("group_id", "user_id", name="uq_group_member"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_id: Mapped[str] = mapped_column(String(64))
+    user_id: Mapped[str] = mapped_column(String(64))
+    display_name: Mapped[str] = mapped_column(String(128))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class GroupTag(Base):
+    """Persistent tag vocabulary per group for LLM consistency."""
+
+    __tablename__ = "group_tags"
+    __table_args__ = (
+        UniqueConstraint("group_id", "name", name="uq_group_tag"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_id: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

@@ -17,6 +17,7 @@ from linebot.v3.webhooks import (
 )
 from linebot.v3.webhook import WebhookParser
 from sqlalchemy import cast, delete, func, select, Date
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import (
     APP_URL,
@@ -27,7 +28,7 @@ from app.config import (
 )
 from app.database import async_session, init_db
 from app.line_client import get_api, get_display_name, reply_text
-from app.models import Message, Summary, Task, TokenUsage
+from app.models import GroupMember, GroupTag, Message, Summary, Task, TokenUsage
 from app.summarizer import summarize_chat
 
 logging.basicConfig(level=logging.INFO)
@@ -232,7 +233,7 @@ async def handle_message(api, event: MessageEvent):
     display_name = await get_display_name(api, group_id, user_id)
     content = event.message.text
 
-    # Store message
+    # Store message + upsert group member
     async with async_session() as session:
         msg = Message(
             group_id=group_id,
@@ -243,6 +244,14 @@ async def handle_message(api, event: MessageEvent):
             line_message_id=event.message.id,
         )
         session.add(msg)
+        await session.execute(
+            pg_insert(GroupMember)
+            .values(group_id=group_id, user_id=user_id, display_name=display_name)
+            .on_conflict_do_update(
+                constraint="uq_group_member",
+                set_={"display_name": display_name, "updated_at": func.now()},
+            )
+        )
         await session.commit()
 
     # Probabilistic pruning (~10% of inserts) to cap DB size
@@ -320,6 +329,21 @@ async def cmd_summary(
         result = await session.execute(stmt)
         rows = result.scalars().all()
 
+        # Fetch known members and tags for LLM context
+        members_result = await session.execute(
+            select(GroupMember.display_name)
+            .where(GroupMember.group_id == group_id)
+            .order_by(GroupMember.display_name)
+        )
+        known_members = [r[0] for r in members_result.all()]
+
+        tags_result = await session.execute(
+            select(GroupTag.name)
+            .where(GroupTag.group_id == group_id)
+            .order_by(GroupTag.name)
+        )
+        known_tags = [r[0] for r in tags_result.all()]
+
     if not rows:
         if time_specified:
             since_str = since.astimezone(JST).strftime("%-m/%d %H:%M")
@@ -346,7 +370,12 @@ async def cmd_summary(
     ]
 
     try:
-        result = summarize_chat(messages, previous_summary=previous_summary_text)
+        result = summarize_chat(
+            messages,
+            previous_summary=previous_summary_text,
+            known_members=known_members,
+            known_tags=known_tags,
+        )
     except Exception as e:
         logger.exception("Summarization failed")
         reply_text(api, event, f"要約に失敗しました: {e}")
@@ -364,6 +393,18 @@ async def cmd_summary(
                 source_summary=result["summary"][:500],
             )
             session.add(task)
+
+        # Save new tags to group vocabulary
+        all_tags: set[str] = set()
+        for t in result.get("tasks", []):
+            for tag in t.get("tags") or []:
+                all_tags.add(tag)
+        for tag_name in all_tags:
+            await session.execute(
+                pg_insert(GroupTag)
+                .values(group_id=group_id, name=tag_name)
+                .on_conflict_do_nothing(constraint="uq_group_tag")
+            )
 
         # Save summary record
         summary_record = Summary(
