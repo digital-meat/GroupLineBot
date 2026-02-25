@@ -24,11 +24,15 @@ SUMMARY_SYSTEM_PROMPT = """\
    ※「前回の要約」が提供されている場合、その内容も含めてタスクを抽出してください。
    ただし要約は新しいメッセージのみを対象にしてください。
 
+3. **タグ付け**: 各タスクに1-3個の短いタグを付けてください。
+   タスクの内容を分類する短いラベルです。
+   例: 買い物, 連絡, 練習, 準備, 確認, 予約, 作業, 会計, 検討, 相談
+
 出力は必ず以下のJSON形式で返してください（他のテキストは含めないで）:
 {
   "summary": "キャッチアップ要約のテキスト（markdown箇条書き可）",
   "tasks": [
-    {"title": "タスクの内容", "assignee": "担当者名 or null"}
+    {"title": "タスクの内容", "assignee": "担当者名 or null", "tags": ["タグ1", "タグ2"]}
   ]
 }
 """
@@ -159,6 +163,10 @@ _SUMMARY_SCHEMA = {
                 "properties": {
                     "title": {"type": "string"},
                     "assignee": {"type": "string", "nullable": True},
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
                 },
                 "required": ["title"],
             },

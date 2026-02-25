@@ -8,24 +8,37 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #333; padding: 16px; max-width: 600px; margin: 0 auto; }
   h1 { font-size: 1.3rem; margin-bottom: 12px; }
-  .toolbar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
-  .toolbar button { padding: 6px 14px; border: none; border-radius: 6px; font-size: 0.85rem; cursor: pointer; }
+
+  .toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
   .filter-btns button { padding: 4px 12px; border: 1px solid #ccc; border-radius: 16px; background: #fff; font-size: 0.8rem; cursor: pointer; }
   .filter-btns button.active { background: #2c3e50; color: #fff; border-color: #2c3e50; }
+
+  .assignee-filter { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+  .assignee-filter button { padding: 3px 10px; border: 1px solid #ddd; border-radius: 12px; background: #fff; font-size: 0.75rem; cursor: pointer; color: #555; }
+  .assignee-filter button.active { background: #3498db; color: #fff; border-color: #3498db; }
+
   .task-list { list-style: none; }
   .task-item { display: flex; align-items: center; gap: 10px; background: #fff; border-radius: 8px; padding: 12px; margin-bottom: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); transition: opacity 0.2s; }
-  .task-item.done { opacity: 0.5; }
+  .task-item.done { opacity: 0.55; }
   .task-item.done .task-title { text-decoration: line-through; }
   .task-check { width: 22px; height: 22px; cursor: pointer; accent-color: #27ae60; flex-shrink: 0; }
   .task-body { flex: 1; min-width: 0; }
   .task-title { font-size: 0.95rem; word-break: break-word; }
+  .task-tags { margin-top: 3px; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.68rem; font-weight: 500; margin-right: 4px; }
   .task-meta { font-size: 0.75rem; color: #888; margin-top: 2px; }
   .task-delete { background: none; border: none; cursor: pointer; font-size: 1.1rem; color: #ccc; padding: 4px; }
   .task-delete:hover { color: #e74c3c; }
+
+  .date-header { font-size: 0.8rem; color: #666; padding: 12px 0 6px; font-weight: 600; display: flex; align-items: center; gap: 8px; list-style: none; }
+  .date-header::after { content: ""; flex: 1; height: 1px; background: #ddd; }
+  .date-header.today { color: #2c3e50; font-size: 0.85rem; }
+
   .add-form { display: flex; gap: 8px; margin-bottom: 16px; }
   .add-form input { flex: 1; padding: 8px 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 0.9rem; }
   .add-form button { padding: 8px 16px; border: none; border-radius: 8px; background: #2c3e50; color: #fff; font-size: 0.85rem; cursor: pointer; flex-shrink: 0; }
   .add-form button:hover { background: #1a252f; }
+
   .empty { text-align: center; color: #999; margin-top: 40px; font-size: 0.95rem; }
   .loading { text-align: center; color: #999; margin-top: 40px; }
 </style>
@@ -41,6 +54,8 @@
     <button data-filter="all">すべて</button>
   </div>
 </div>
+
+<div class="assignee-filter" id="assignee-filter"></div>
 
 <form class="add-form" id="add-form">
   <input type="text" id="new-task" placeholder="新しいタスクを入力..." autocomplete="off">
@@ -58,6 +73,21 @@ if (!groupId) { document.getElementById("task-list").innerHTML = '<li class="emp
 
 let allTasks = [];
 let currentFilter = "open";
+let currentAssignee = null;
+
+const TAG_COLORS = [
+  {bg:"#e8f4fd",fg:"#1a73e8"}, {bg:"#fce8e6",fg:"#d93025"},
+  {bg:"#e6f4ea",fg:"#188038"}, {bg:"#fef7e0",fg:"#e37400"},
+  {bg:"#f3e8fd",fg:"#9334e6"}, {bg:"#e8f0fe",fg:"#185abc"},
+  {bg:"#fde7f0",fg:"#c5221f"}, {bg:"#e0f7fa",fg:"#00796b"},
+];
+
+function tagStyle(tag) {
+  let h = 0;
+  for (let i = 0; i < tag.length; i++) h = ((h << 5) - h) + tag.charCodeAt(i);
+  const c = TAG_COLORS[Math.abs(h) % TAG_COLORS.length];
+  return `background:${c.bg};color:${c.fg}`;
+}
 
 // --- API helpers ---
 async function fetchTasks() {
@@ -74,7 +104,10 @@ async function toggleTask(id, currentStatus) {
     body: JSON.stringify({ status: newStatus }),
   });
   const t = allTasks.find(t => t.id === id);
-  if (t) t.status = newStatus;
+  if (t) {
+    t.status = newStatus;
+    t.completed_at = newStatus === "done" ? new Date().toISOString() : null;
+  }
   render();
 }
 
@@ -95,33 +128,148 @@ async function addTask(title) {
   render();
 }
 
+// --- Date/time helpers (JST) ---
+function jstDateKey(isoStr) {
+  if (!isoStr) return "unknown";
+  return new Date(isoStr).toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+}
+
+function jstToday() {
+  return new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+}
+
+function jstYesterday() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return d.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+}
+
+function dateLabel(dateKey) {
+  const today = jstToday();
+  if (dateKey === today) return "今日完了";
+  if (dateKey === jstYesterday()) return "昨日完了";
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  const wd = ["日","月","火","水","木","金","土"][dt.getDay()];
+  return `${m}/${d} (${wd}) 完了`;
+}
+
+function fmtTime(isoStr) {
+  if (!isoStr) return "";
+  return new Date(isoStr).toLocaleTimeString("ja-JP", { timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit" });
+}
+
+function fmtDate(isoStr) {
+  if (!isoStr) return "";
+  return new Date(isoStr).toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric" });
+}
+
 // --- Render ---
+function renderItem(t) {
+  const checked = t.status === "done" ? "checked" : "";
+  const cls = t.status === "done" ? "done" : "";
+  const assignee = t.assignee ? `@${esc(t.assignee)}` : "";
+  const tagsHtml = (t.tags || []).map(tag =>
+    `<span class="tag" style="${tagStyle(tag)}">${esc(tag)}</span>`
+  ).join("");
+  let timeInfo;
+  if (t.status === "done") {
+    const tm = fmtTime(t.completed_at);
+    timeInfo = tm ? `${tm} 完了` : "完了";
+  } else {
+    timeInfo = fmtDate(t.created_at);
+  }
+  return `
+    <li class="task-item ${cls}">
+      <input type="checkbox" class="task-check" ${checked} onchange="toggleTask(${t.id}, '${t.status}')">
+      <div class="task-body">
+        <div class="task-title">${esc(t.title)}</div>
+        ${tagsHtml ? `<div class="task-tags">${tagsHtml}</div>` : ""}
+        <div class="task-meta">${assignee}${assignee && timeInfo ? " ・ " : ""}${timeInfo}</div>
+      </div>
+      <button class="task-delete" onclick="deleteTask(${t.id})" title="削除">&times;</button>
+    </li>`;
+}
+
 function render() {
   const list = document.getElementById("task-list");
-  const filtered = currentFilter === "all"
-    ? allTasks
+
+  let filtered = currentFilter === "all"
+    ? [...allTasks]
     : allTasks.filter(t => t.status === currentFilter);
+
+  if (currentAssignee !== null) {
+    filtered = filtered.filter(t => (t.assignee || "") === currentAssignee);
+  }
+
+  updateAssigneeFilter();
 
   if (filtered.length === 0) {
     list.innerHTML = '<li class="empty">タスクはありません</li>';
     return;
   }
 
-  list.innerHTML = filtered.map(t => {
-    const checked = t.status === "done" ? "checked" : "";
-    const doneClass = t.status === "done" ? "done" : "";
-    const assignee = t.assignee ? `@${t.assignee}` : "";
-    const date = t.created_at ? new Date(t.created_at).toLocaleDateString("ja-JP", { month: "short", day: "numeric" }) : "";
-    return `
-      <li class="task-item ${doneClass}">
-        <input type="checkbox" class="task-check" ${checked} onchange="toggleTask(${t.id}, '${t.status}')">
-        <div class="task-body">
-          <div class="task-title">${esc(t.title)}</div>
-          <div class="task-meta">${esc(assignee)}${assignee && date ? " ・ " : ""}${date}</div>
-        </div>
-        <button class="task-delete" onclick="deleteTask(${t.id})" title="削除">&times;</button>
-      </li>`;
-  }).join("");
+  if (currentFilter === "done") {
+    // Sort by completed_at descending
+    filtered.sort((a, b) => {
+      const da = a.completed_at || a.created_at || "";
+      const db = b.completed_at || b.created_at || "";
+      return da < db ? 1 : da > db ? -1 : 0;
+    });
+
+    // Group by date
+    const groups = new Map();
+    for (const t of filtered) {
+      const key = jstDateKey(t.completed_at || t.created_at);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(t);
+    }
+
+    let html = "";
+    for (const [key, tasks] of groups) {
+      const isToday = key === jstToday();
+      html += `<li class="date-header ${isToday ? 'today' : ''}">${dateLabel(key)}</li>`;
+      html += tasks.map(renderItem).join("");
+    }
+    list.innerHTML = html;
+  } else {
+    // Sort by created_at descending
+    filtered.sort((a, b) => {
+      const da = a.created_at || "";
+      const db = b.created_at || "";
+      return da < db ? 1 : da > db ? -1 : 0;
+    });
+    list.innerHTML = filtered.map(renderItem).join("");
+  }
+}
+
+// --- Assignee filter ---
+function updateAssigneeFilter() {
+  const container = document.getElementById("assignee-filter");
+  const statusFiltered = currentFilter === "all"
+    ? allTasks
+    : allTasks.filter(t => t.status === currentFilter);
+  const assignees = [...new Set(statusFiltered.map(t => t.assignee).filter(Boolean))].sort();
+
+  if (assignees.length === 0) {
+    container.innerHTML = "";
+    return;
+  }
+
+  container.innerHTML = "";
+  const allBtn = document.createElement("button");
+  allBtn.textContent = "全員";
+  if (currentAssignee === null) allBtn.classList.add("active");
+  allBtn.addEventListener("click", () => { currentAssignee = null; render(); });
+  container.appendChild(allBtn);
+
+  for (const a of assignees) {
+    const btn = document.createElement("button");
+    btn.textContent = "@" + a;
+    if (currentAssignee === a) btn.classList.add("active");
+    btn.addEventListener("click", () => { currentAssignee = a; render(); });
+    container.appendChild(btn);
+  }
 }
 
 function esc(s) {
@@ -136,6 +284,7 @@ document.querySelectorAll(".filter-btns button").forEach(btn => {
     document.querySelectorAll(".filter-btns button").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
     currentFilter = btn.dataset.filter;
+    currentAssignee = null;
     render();
   });
 });

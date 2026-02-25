@@ -355,10 +355,12 @@ async def cmd_summary(
     # Save tasks
     async with async_session() as session:
         for t in result.get("tasks", []):
+            tags = t.get("tags")
             task = Task(
                 group_id=group_id,
                 title=t["title"],
                 assignee=t.get("assignee"),
+                tags=",".join(tags) if tags else None,
                 source_summary=result["summary"][:500],
             )
             session.add(task)
@@ -443,6 +445,7 @@ async def cmd_done_task(api, event: MessageEvent, group_id: str, cmd: str):
             return
 
         task.status = "done"
+        task.completed_at = datetime.utcnow()
         await session.commit()
 
     reply_text(api, event, f"✅ タスク #{task_id} を完了にしました: {task.title}")
@@ -508,11 +511,13 @@ async def api_create_task(request: Request):
     title = (body.get("title") or "").strip()
     if not group_id or not title:
         raise HTTPException(status_code=400, detail="group_id and title are required")
+    tags_list = body.get("tags")
     async with async_session() as session:
         task = Task(
             group_id=group_id,
             title=title,
             assignee=body.get("assignee"),
+            tags=",".join(tags_list) if tags_list else None,
         )
         session.add(task)
         await session.commit()
@@ -522,7 +527,9 @@ async def api_create_task(request: Request):
         "title": task.title,
         "assignee": task.assignee,
         "status": task.status,
-        "created_at": task.created_at.isoformat() if task.created_at else None,
+        "tags": task.tags.split(",") if task.tags else [],
+        "created_at": task.created_at.isoformat() + "Z" if task.created_at else None,
+        "completed_at": None,
     }
 
 
@@ -543,7 +550,9 @@ async def api_list_tasks(group_id: str = Query(...)):
             "title": t.title,
             "assignee": t.assignee,
             "status": t.status,
-            "created_at": t.created_at.isoformat() if t.created_at else None,
+            "tags": t.tags.split(",") if t.tags else [],
+            "created_at": t.created_at.isoformat() + "Z" if t.created_at else None,
+            "completed_at": t.completed_at.isoformat() + "Z" if t.completed_at else None,
         }
         for t in tasks
     ]
@@ -561,6 +570,10 @@ async def api_update_task(task_id: int, request: Request):
             raise HTTPException(status_code=404, detail="Task not found")
         if "status" in body:
             task.status = body["status"]
+            if body["status"] == "done":
+                task.completed_at = datetime.utcnow()
+            else:
+                task.completed_at = None
         await session.commit()
     return {"ok": True}
 

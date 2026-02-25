@@ -33,8 +33,10 @@ class Task(Base):
     title: Mapped[str] = mapped_column(String(256))
     assignee: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="open")  # open / done
+    tags: Mapped[str | None] = mapped_column(String(256), nullable=True)  # comma-separated
     source_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class Summary(Base):

@@ -1,3 +1,4 @@
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -24,4 +25,10 @@ async def init_db() -> None:
         return
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Migrate: add new columns to existing 'tasks' table (safe to re-run)
+        for col_sql in (
+            "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP",
+            "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tags VARCHAR(256)",
+        ):
+            await conn.execute(text(col_sql))
     _db_initialized = True
