@@ -619,7 +619,7 @@ async def api_update_task(task_id: int, request: Request):
             task.status = body["status"]
             if body["status"] == "done":
                 task.completed_at = datetime.utcnow()
-            else:
+            elif body["status"] == "open":
                 task.completed_at = None
         if "priority" in body:
             task.priority = body["priority"]

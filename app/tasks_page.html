@@ -10,6 +10,7 @@
   h1 { font-size: 1.3rem; margin-bottom: 12px; }
 
   .toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .filter-btns { display: flex; gap: 6px; flex-wrap: wrap; }
   .filter-btns button { padding: 4px 12px; border: 1px solid #ccc; border-radius: 16px; background: #fff; font-size: 0.8rem; cursor: pointer; }
   .filter-btns button.active { background: #2c3e50; color: #fff; border-color: #2c3e50; }
 
@@ -31,6 +32,8 @@
   .task-meta { font-size: 0.75rem; color: #888; margin-top: 3px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .task-delete { background: none; border: none; cursor: pointer; font-size: 1.1rem; color: #ccc; padding: 4px; margin-top: -2px; }
   .task-delete:hover { color: #e74c3c; }
+  .task-archive { background: none; border: 1px solid #e0e0e0; border-radius: 6px; cursor: pointer; font-size: 0.6rem; color: #999; padding: 2px 6px; margin-top: -1px; white-space: nowrap; }
+  .task-archive:hover { color: #3498db; border-color: #3498db; }
 
   .priority-badge { display: inline-block; padding: 0 6px; border-radius: 8px; font-size: 0.65rem; cursor: pointer; user-select: none; line-height: 1.6; }
   .priority-badge.high { background: #fce8e6; color: #c5221f; }
@@ -70,6 +73,7 @@
     <button data-filter="open" class="active">未完了</button>
     <button data-filter="done">完了済み</button>
     <button data-filter="all">すべて</button>
+    <button data-filter="archived">アーカイブ</button>
   </div>
 </div>
 
@@ -101,7 +105,7 @@ async function fetchTasks() {
 }
 
 async function toggleTask(id, currentStatus) {
-  const newStatus = currentStatus === "open" ? "done" : "open";
+  const newStatus = currentStatus === "done" ? "open" : currentStatus === "archived" ? "open" : "done";
   await fetch(`/api/tasks/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -110,8 +114,20 @@ async function toggleTask(id, currentStatus) {
   const t = allTasks.find(t => t.id === id);
   if (t) {
     t.status = newStatus;
-    t.completed_at = newStatus === "done" ? new Date().toISOString() : null;
+    if (newStatus === "done") t.completed_at = new Date().toISOString();
+    else if (newStatus === "open") t.completed_at = null;
   }
+  render();
+}
+
+async function archiveTask(id) {
+  await fetch(`/api/tasks/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "archived" }),
+  });
+  const t = allTasks.find(t => t.id === id);
+  if (t) t.status = "archived";
   render();
 }
 
@@ -227,18 +243,18 @@ function dueClass(dateStr) {
 // --- Render ---
 const PRIO_LABELS = { high: "高", medium: "中", low: "低" };
 
-function renderItem(t) {
+function renderItem(t, inArchive) {
   const checked = t.status === "done" ? "checked" : "";
   const prio = t.priority || "medium";
-  const prioClass = t.status !== "done" ? ` prio-${prio}` : "";
-  const doneClass = t.status === "done" ? " done" : "";
+  const prioClass = t.status !== "done" && t.status !== "archived" ? ` prio-${prio}` : "";
+  const doneClass = t.status === "done" || t.status === "archived" ? " done" : "";
   const assignee = t.assignee ? `<span>@${esc(t.assignee)}</span>` : "";
   const tagsHtml = (t.tags || []).map(tag =>
     `<span class="tag">${esc(tag)}</span>`
   ).join("");
 
   let metaParts = "";
-  if (t.status === "done") {
+  if (t.status === "done" || t.status === "archived") {
     const tm = fmtTime(t.completed_at);
     metaParts = `<span>${tm ? tm + " 完了" : "完了"}</span>`;
   } else {
@@ -252,6 +268,10 @@ function renderItem(t) {
     metaParts = `${createdStr ? `<span>${createdStr}</span>` : ""}${prioBadge}${dueInput}`;
   }
 
+  const actionBtn = inArchive
+    ? `<button class="task-delete" onclick="deleteTask(${t.id})" title="削除">&times;</button>`
+    : `<button class="task-archive" onclick="archiveTask(${t.id})" title="アーカイブ">保管</button>`;
+
   return `
     <li class="task-item${doneClass}${prioClass}">
       <input type="checkbox" class="task-check" ${checked} onchange="toggleTask(${t.id}, '${t.status}')">
@@ -260,7 +280,7 @@ function renderItem(t) {
         ${tagsHtml ? `<div class="task-tags">${tagsHtml}</div>` : ""}
         <div class="task-meta">${assignee}${metaParts}</div>
       </div>
-      <button class="task-delete" onclick="deleteTask(${t.id})" title="削除">&times;</button>
+      ${actionBtn}
     </li>`;
 }
 
@@ -279,10 +299,16 @@ function sortByDueThenCreated(arr) {
 
 function render() {
   const list = document.getElementById("task-list");
+  const inArchive = currentFilter === "archived";
 
-  let filtered = currentFilter === "all"
-    ? [...allTasks]
-    : allTasks.filter(t => t.status === currentFilter);
+  let filtered;
+  if (currentFilter === "all") {
+    filtered = allTasks.filter(t => t.status !== "archived");
+  } else if (currentFilter === "archived") {
+    filtered = allTasks.filter(t => t.status === "archived");
+  } else {
+    filtered = allTasks.filter(t => t.status === currentFilter);
+  }
 
   if (currentAssignee !== null) {
     filtered = filtered.filter(t => (t.assignee || "") === currentAssignee);
@@ -291,7 +317,7 @@ function render() {
   updateAssigneeFilter();
 
   if (filtered.length === 0) {
-    list.innerHTML = '<li class="empty">タスクはありません</li>';
+    list.innerHTML = `<li class="empty">${inArchive ? "アーカイブはありません" : "タスクはありません"}</li>`;
     return;
   }
 
@@ -315,7 +341,7 @@ function render() {
     for (const [key, tasks] of groups) {
       const isToday = key === jstToday();
       html += `<li class="date-header ${isToday ? 'today' : ''}">${dateLabel(key)}</li>`;
-      html += tasks.map(renderItem).join("");
+      html += tasks.map(t => renderItem(t, false)).join("");
     }
     list.innerHTML = html;
 
@@ -339,9 +365,18 @@ function render() {
       sortByDueThenCreated(tasks);
       const cls = p === "high" ? " prio-high" : "";
       html += `<li class="date-header${cls}">${prioHeaders[p]}</li>`;
-      html += tasks.map(renderItem).join("");
+      html += tasks.map(t => renderItem(t, false)).join("");
     }
     list.innerHTML = html;
+
+  } else if (inArchive) {
+    // Archive tab: sort by created_at descending, flat list
+    filtered.sort((a, b) => {
+      const da = a.created_at || "";
+      const db = b.created_at || "";
+      return da < db ? 1 : da > db ? -1 : 0;
+    });
+    list.innerHTML = filtered.map(t => renderItem(t, true)).join("");
 
   } else {
     // "all" tab: sort by created_at descending
@@ -350,7 +385,7 @@ function render() {
       const db = b.created_at || "";
       return da < db ? 1 : da > db ? -1 : 0;
     });
-    list.innerHTML = filtered.map(renderItem).join("");
+    list.innerHTML = filtered.map(t => renderItem(t, false)).join("");
   }
 }
 
@@ -358,7 +393,9 @@ function render() {
 function updateAssigneeFilter() {
   const container = document.getElementById("assignee-filter");
   const statusFiltered = currentFilter === "all"
-    ? allTasks
+    ? allTasks.filter(t => t.status !== "archived")
+    : currentFilter === "archived"
+    ? allTasks.filter(t => t.status === "archived")
     : allTasks.filter(t => t.status === currentFilter);
   const assignees = [...new Set(statusFiltered.map(t => t.assignee).filter(Boolean))].sort();
 
