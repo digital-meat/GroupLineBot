@@ -37,6 +37,11 @@
   .priority-badge.medium { background: #eef0f4; color: #5f6368; }
   .priority-badge.low { background: #f5f5f5; color: #9aa0a6; }
 
+  .prio-picker { position: relative; display: inline-block; }
+  .prio-popup { position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%); display: flex; gap: 4px; background: #fff; border: 1px solid #e0e0e0; border-radius: 10px; padding: 4px 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 10; white-space: nowrap; }
+  .prio-popup .priority-badge { font-size: 0.7rem; padding: 1px 10px; }
+  .prio-popup .priority-badge.selected { box-shadow: 0 0 0 1.5px currentColor; }
+
   .due-input { font-size: 0.7rem; border: 1px solid #e0e0e0; border-radius: 6px; padding: 0 4px; color: #888; background: transparent; width: 120px; }
   .due-input::-webkit-calendar-picker-indicator { opacity: 0.5; cursor: pointer; }
   .due-input.overdue { color: #c5221f; border-color: #fce8e6; }
@@ -138,12 +143,26 @@ async function setPriority(id, priority) {
   render();
 }
 
-function cyclePriority(id) {
-  const t = allTasks.find(t => t.id === id);
-  if (!t) return;
-  const next = { high: "medium", medium: "low", low: "high" };
-  setPriority(id, next[t.priority || "medium"]);
+let activePrioPopup = null;
+
+function openPrioPicker(id, ev) {
+  ev.stopPropagation();
+  closePrioPicker();
+  const popup = ev.currentTarget.parentElement.querySelector(".prio-popup");
+  if (popup) { popup.style.display = "flex"; activePrioPopup = popup; }
 }
+
+function pickPriority(id, priority, ev) {
+  ev.stopPropagation();
+  closePrioPicker();
+  setPriority(id, priority);
+}
+
+function closePrioPicker() {
+  if (activePrioPopup) { activePrioPopup.style.display = "none"; activePrioPopup = null; }
+}
+
+document.addEventListener("click", closePrioPicker);
 
 async function setDueDate(id, dateStr) {
   await fetch(`/api/tasks/${id}`, {
@@ -224,7 +243,10 @@ function renderItem(t) {
     metaParts = `<span>${tm ? tm + " 完了" : "完了"}</span>`;
   } else {
     const createdStr = fmtDate(t.created_at);
-    const prioBadge = `<span class="priority-badge ${prio}" onclick="cyclePriority(${t.id})" title="クリックで変更">${PRIO_LABELS[prio]}</span>`;
+    const prioOptions = ["high","medium","low"].map(p =>
+      `<span class="priority-badge ${p}${p === prio ? ' selected' : ''}" onclick="pickPriority(${t.id},'${p}',event)">${PRIO_LABELS[p]}</span>`
+    ).join("");
+    const prioBadge = `<span class="prio-picker"><span class="priority-badge ${prio}" onclick="openPrioPicker(${t.id},event)">${PRIO_LABELS[prio]}</span><span class="prio-popup" style="display:none">${prioOptions}</span></span>`;
     const dueCls = dueClass(t.due_date);
     const dueInput = `<input type="date" class="due-input${dueCls ? " " + dueCls : ""}" value="${t.due_date || ""}" onchange="setDueDate(${t.id}, this.value)" title="期限">`;
     metaParts = `${createdStr ? `<span>${createdStr}</span>` : ""}${prioBadge}${dueInput}`;
