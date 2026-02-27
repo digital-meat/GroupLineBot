@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Date, DateTime, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -33,6 +33,8 @@ class Task(Base):
     title: Mapped[str] = mapped_column(String(256))
     assignee: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="open")  # open / done
+    priority: Mapped[str] = mapped_column(String(8), default="medium")  # high / medium / low
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     tags: Mapped[str | None] = mapped_column(String(256), nullable=True)  # comma-separated
     source_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

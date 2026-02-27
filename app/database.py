@@ -29,6 +29,8 @@ async def init_db() -> None:
         for col_sql in (
             "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP",
             "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tags VARCHAR(256)",
+            "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority VARCHAR(8) DEFAULT 'medium'",
+            "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS due_date DATE",
         ):
             await conn.execute(text(col_sql))
     _db_initialized = True

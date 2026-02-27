@@ -3,7 +3,7 @@
 import logging
 import random
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
@@ -559,6 +559,8 @@ async def api_create_task(request: Request):
             title=title,
             assignee=body.get("assignee"),
             tags=",".join(tags_list) if tags_list else None,
+            priority=body.get("priority", "medium"),
+            due_date=date.fromisoformat(body["due_date"]) if body.get("due_date") else None,
         )
         session.add(task)
         await session.commit()
@@ -568,6 +570,8 @@ async def api_create_task(request: Request):
         "title": task.title,
         "assignee": task.assignee,
         "status": task.status,
+        "priority": task.priority or "medium",
+        "due_date": task.due_date.isoformat() if task.due_date else None,
         "tags": task.tags.split(",") if task.tags else [],
         "created_at": task.created_at.isoformat() + "Z" if task.created_at else None,
         "completed_at": None,
@@ -591,6 +595,8 @@ async def api_list_tasks(group_id: str = Query(...)):
             "title": t.title,
             "assignee": t.assignee,
             "status": t.status,
+            "priority": t.priority or "medium",
+            "due_date": t.due_date.isoformat() if t.due_date else None,
             "tags": t.tags.split(",") if t.tags else [],
             "created_at": t.created_at.isoformat() + "Z" if t.created_at else None,
             "completed_at": t.completed_at.isoformat() + "Z" if t.completed_at else None,
@@ -615,6 +621,10 @@ async def api_update_task(task_id: int, request: Request):
                 task.completed_at = datetime.utcnow()
             else:
                 task.completed_at = None
+        if "priority" in body:
+            task.priority = body["priority"]
+        if "due_date" in body:
+            task.due_date = date.fromisoformat(body["due_date"]) if body["due_date"] else None
         await session.commit()
     return {"ok": True}
 

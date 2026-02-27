@@ -18,21 +18,34 @@
   .assignee-filter button.active { background: #3498db; color: #fff; border-color: #3498db; }
 
   .task-list { list-style: none; }
-  .task-item { display: flex; align-items: center; gap: 10px; background: #fff; border-radius: 8px; padding: 12px; margin-bottom: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); transition: opacity 0.2s; }
+  .task-item { display: flex; align-items: flex-start; gap: 10px; background: #fff; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); transition: opacity 0.2s; border-left: 3px solid transparent; }
   .task-item.done { opacity: 0.55; }
   .task-item.done .task-title { text-decoration: line-through; }
-  .task-check { width: 22px; height: 22px; cursor: pointer; accent-color: #27ae60; flex-shrink: 0; }
+  .task-item.prio-high { border-left-color: #d93025; }
+  .task-item.prio-low { border-left-color: #dadce0; }
+  .task-check { width: 22px; height: 22px; cursor: pointer; accent-color: #27ae60; flex-shrink: 0; margin-top: 1px; }
   .task-body { flex: 1; min-width: 0; }
   .task-title { font-size: 0.95rem; word-break: break-word; }
   .task-tags { margin-top: 3px; }
   .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.68rem; font-weight: 500; margin-right: 4px; background: #eef0f4; color: #5f6368; }
-  .task-meta { font-size: 0.75rem; color: #888; margin-top: 2px; }
-  .task-delete { background: none; border: none; cursor: pointer; font-size: 1.1rem; color: #ccc; padding: 4px; }
+  .task-meta { font-size: 0.75rem; color: #888; margin-top: 3px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .task-delete { background: none; border: none; cursor: pointer; font-size: 1.1rem; color: #ccc; padding: 4px; margin-top: -2px; }
   .task-delete:hover { color: #e74c3c; }
+
+  .priority-badge { display: inline-block; padding: 0 6px; border-radius: 8px; font-size: 0.65rem; cursor: pointer; user-select: none; line-height: 1.6; }
+  .priority-badge.high { background: #fce8e6; color: #c5221f; }
+  .priority-badge.medium { background: #eef0f4; color: #5f6368; }
+  .priority-badge.low { background: #f5f5f5; color: #9aa0a6; }
+
+  .due-input { font-size: 0.7rem; border: 1px solid #e0e0e0; border-radius: 6px; padding: 0 4px; color: #888; background: transparent; width: 120px; }
+  .due-input::-webkit-calendar-picker-indicator { opacity: 0.5; cursor: pointer; }
+  .due-input.overdue { color: #c5221f; border-color: #fce8e6; }
+  .due-input.due-soon { color: #e37400; border-color: #fef7e0; }
 
   .date-header { font-size: 0.8rem; color: #666; padding: 12px 0 6px; font-weight: 600; display: flex; align-items: center; gap: 8px; list-style: none; }
   .date-header::after { content: ""; flex: 1; height: 1px; background: #ddd; }
   .date-header.today { color: #2c3e50; font-size: 0.85rem; }
+  .date-header.prio-high { color: #c5221f; }
 
   .add-form { display: flex; gap: 8px; margin-bottom: 16px; }
   .add-form input { flex: 1; padding: 8px 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 0.9rem; }
@@ -114,6 +127,35 @@ async function addTask(title) {
   render();
 }
 
+async function setPriority(id, priority) {
+  await fetch(`/api/tasks/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ priority }),
+  });
+  const t = allTasks.find(t => t.id === id);
+  if (t) t.priority = priority;
+  render();
+}
+
+function cyclePriority(id) {
+  const t = allTasks.find(t => t.id === id);
+  if (!t) return;
+  const next = { high: "medium", medium: "low", low: "high" };
+  setPriority(id, next[t.priority || "medium"]);
+}
+
+async function setDueDate(id, dateStr) {
+  await fetch(`/api/tasks/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ due_date: dateStr || null }),
+  });
+  const t = allTasks.find(t => t.id === id);
+  if (t) t.due_date = dateStr || null;
+  render();
+}
+
 // --- Date/time helpers (JST) ---
 function jstDateKey(isoStr) {
   if (!isoStr) return "unknown";
@@ -130,9 +172,14 @@ function jstYesterday() {
   return d.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
 }
 
+function jstTomorrow() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+}
+
 function dateLabel(dateKey) {
-  const today = jstToday();
-  if (dateKey === today) return "今日完了";
+  if (dateKey === jstToday()) return "今日完了";
   if (dateKey === jstYesterday()) return "昨日完了";
   const [y, m, d] = dateKey.split("-").map(Number);
   const dt = new Date(y, m - 1, d);
@@ -150,31 +197,62 @@ function fmtDate(isoStr) {
   return new Date(isoStr).toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric" });
 }
 
+function dueClass(dateStr) {
+  if (!dateStr) return "";
+  const today = jstToday();
+  if (dateStr < today) return "overdue";
+  if (dateStr === today || dateStr === jstTomorrow()) return "due-soon";
+  return "";
+}
+
 // --- Render ---
+const PRIO_LABELS = { high: "高", medium: "中", low: "低" };
+
 function renderItem(t) {
   const checked = t.status === "done" ? "checked" : "";
-  const cls = t.status === "done" ? "done" : "";
-  const assignee = t.assignee ? `@${esc(t.assignee)}` : "";
+  const prio = t.priority || "medium";
+  const prioClass = t.status !== "done" ? ` prio-${prio}` : "";
+  const doneClass = t.status === "done" ? " done" : "";
+  const assignee = t.assignee ? `<span>@${esc(t.assignee)}</span>` : "";
   const tagsHtml = (t.tags || []).map(tag =>
     `<span class="tag">${esc(tag)}</span>`
   ).join("");
-  let timeInfo;
+
+  let metaParts = "";
   if (t.status === "done") {
     const tm = fmtTime(t.completed_at);
-    timeInfo = tm ? `${tm} 完了` : "完了";
+    metaParts = `<span>${tm ? tm + " 完了" : "完了"}</span>`;
   } else {
-    timeInfo = fmtDate(t.created_at);
+    const createdStr = fmtDate(t.created_at);
+    const prioBadge = `<span class="priority-badge ${prio}" onclick="cyclePriority(${t.id})" title="クリックで変更">${PRIO_LABELS[prio]}</span>`;
+    const dueCls = dueClass(t.due_date);
+    const dueInput = `<input type="date" class="due-input${dueCls ? " " + dueCls : ""}" value="${t.due_date || ""}" onchange="setDueDate(${t.id}, this.value)" title="期限">`;
+    metaParts = `${createdStr ? `<span>${createdStr}</span>` : ""}${prioBadge}${dueInput}`;
   }
+
   return `
-    <li class="task-item ${cls}">
+    <li class="task-item${doneClass}${prioClass}">
       <input type="checkbox" class="task-check" ${checked} onchange="toggleTask(${t.id}, '${t.status}')">
       <div class="task-body">
         <div class="task-title">${esc(t.title)}</div>
         ${tagsHtml ? `<div class="task-tags">${tagsHtml}</div>` : ""}
-        <div class="task-meta">${assignee}${assignee && timeInfo ? " ・ " : ""}${timeInfo}</div>
+        <div class="task-meta">${assignee}${metaParts}</div>
       </div>
       <button class="task-delete" onclick="deleteTask(${t.id})" title="削除">&times;</button>
     </li>`;
+}
+
+function sortByDueThenCreated(arr) {
+  arr.sort((a, b) => {
+    // due_date ascending, null last
+    if (a.due_date && !b.due_date) return -1;
+    if (!a.due_date && b.due_date) return 1;
+    if (a.due_date && b.due_date && a.due_date !== b.due_date)
+      return a.due_date < b.due_date ? -1 : 1;
+    // then created_at desc
+    const ca = a.created_at || "", cb = b.created_at || "";
+    return ca > cb ? -1 : ca < cb ? 1 : 0;
+  });
 }
 
 function render() {
@@ -218,8 +296,33 @@ function render() {
       html += tasks.map(renderItem).join("");
     }
     list.innerHTML = html;
+
+  } else if (currentFilter === "open") {
+    // Group by priority, sort by due_date within each group
+    const prioOrder = ["high", "medium", "low"];
+    const prioHeaders = { high: "高", medium: "中", low: "低" };
+    const groups = new Map();
+    for (const p of prioOrder) groups.set(p, []);
+
+    for (const t of filtered) {
+      const p = t.priority || "medium";
+      if (!groups.has(p)) groups.set(p, []);
+      groups.get(p).push(t);
+    }
+
+    let html = "";
+    for (const p of prioOrder) {
+      const tasks = groups.get(p);
+      if (!tasks || tasks.length === 0) continue;
+      sortByDueThenCreated(tasks);
+      const cls = p === "high" ? " prio-high" : "";
+      html += `<li class="date-header${cls}">${prioHeaders[p]}</li>`;
+      html += tasks.map(renderItem).join("");
+    }
+    list.innerHTML = html;
+
   } else {
-    // Sort by created_at descending
+    // "all" tab: sort by created_at descending
     filtered.sort((a, b) => {
       const da = a.created_at || "";
       const db = b.created_at || "";
