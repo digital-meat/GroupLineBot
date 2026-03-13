@@ -96,3 +96,70 @@ class TokenUsage(Base):
     purpose: Mapped[str] = mapped_column(String(32))  # summary / chunk_summary
     group_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+# ---------------------------------------------------------------------------
+# Band practice review models
+# ---------------------------------------------------------------------------
+
+class PracticeSession(Base):
+    """A single practice recording session (one WAV file)."""
+
+    __tablename__ = "practice_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    group_id: Mapped[str] = mapped_column(String(64), index=True)
+    title: Mapped[str] = mapped_column(String(256))  # e.g. "2026-03-10 スタジオ練習"
+    recorded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    duration_sec: Mapped[float | None] = mapped_column(nullable=True)
+    drive_file_id: Mapped[str | None] = mapped_column(String(128), nullable=True)  # original WAV
+    drive_mp3_id: Mapped[str | None] = mapped_column(String(128), nullable=True)   # mp3 for streaming
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending / processed / error
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class SongSegment(Base):
+    """A detected or manually marked segment within a practice session."""
+
+    __tablename__ = "song_segments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(Integer, index=True)
+    track_number: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str | None] = mapped_column(String(256), nullable=True)  # song name (manual label)
+    start_sec: Mapped[float] = mapped_column()
+    end_sec: Mapped[float] = mapped_column()
+    drive_file_id: Mapped[str | None] = mapped_column(String(128), nullable=True)  # split WAV
+    drive_mp3_id: Mapped[str | None] = mapped_column(String(128), nullable=True)   # split mp3
+    auto_detected: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Annotation(Base):
+    """Timestamped annotation on a practice session by a band member."""
+
+    __tablename__ = "annotations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(Integer, index=True)
+    user_name: Mapped[str] = mapped_column(String(128))
+    timestamp_sec: Mapped[float] = mapped_column()  # position in the session
+    content: Mapped[str] = mapped_column(Text)
+    annotation_type: Mapped[str] = mapped_column(String(16), default="comment")  # comment / good / issue
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ClipRequest(Base):
+    """Request to clip a segment from a session — processed by Colab worker."""
+
+    __tablename__ = "clip_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(Integer, index=True)
+    start_sec: Mapped[float] = mapped_column()
+    end_sec: Mapped[float] = mapped_column()
+    title: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending / done / error
+    drive_file_id: Mapped[str | None] = mapped_column(String(128), nullable=True)  # result file
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

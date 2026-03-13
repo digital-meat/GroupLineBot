@@ -28,7 +28,18 @@ from app.config import (
 )
 from app.database import async_session, init_db
 from app.line_client import get_api, get_display_name, reply_text
-from app.models import GroupMember, GroupTag, Message, Summary, Task, TokenUsage
+from app.models import (
+    Annotation,
+    ClipRequest,
+    GroupMember,
+    GroupTag,
+    Message,
+    PracticeSession,
+    SongSegment,
+    Summary,
+    Task,
+    TokenUsage,
+)
 from app.summarizer import summarize_chat
 
 logging.basicConfig(level=logging.INFO)
@@ -709,6 +720,293 @@ async def api_token_usage(days: int = Query(default=30, le=90)):
 async def usage_page():
     await init_db()
     return _get_html("usage_page.html")
+
+
+# ---------------------------------------------------------------------------
+# REST API – Practice review
+# ---------------------------------------------------------------------------
+
+@app.post("/api/sessions")
+async def api_create_session(request: Request):
+    """Register a practice session (called from Colab worker)."""
+    await init_db()
+    body = await request.json()
+    group_id = body.get("group_id")
+    title = (body.get("title") or "").strip()
+    if not group_id or not title:
+        raise HTTPException(status_code=400, detail="group_id and title are required")
+    async with async_session() as session:
+        ps = PracticeSession(
+            group_id=group_id,
+            title=title,
+            recorded_at=datetime.fromisoformat(body["recorded_at"]) if body.get("recorded_at") else None,
+            duration_sec=body.get("duration_sec"),
+            drive_file_id=body.get("drive_file_id"),
+            drive_mp3_id=body.get("drive_mp3_id"),
+            status=body.get("status", "pending"),
+        )
+        session.add(ps)
+        await session.commit()
+        await session.refresh(ps)
+    return {"id": ps.id, "title": ps.title, "status": ps.status}
+
+
+@app.get("/api/sessions")
+async def api_list_sessions(group_id: str = Query(...)):
+    await init_db()
+    async with async_session() as session:
+        stmt = (
+            select(PracticeSession)
+            .where(PracticeSession.group_id == group_id)
+            .order_by(PracticeSession.recorded_at.desc().nullslast(), PracticeSession.id.desc())
+        )
+        result = await session.execute(stmt)
+        sessions = result.scalars().all()
+    return [
+        {
+            "id": s.id,
+            "title": s.title,
+            "recorded_at": s.recorded_at.isoformat() if s.recorded_at else None,
+            "duration_sec": s.duration_sec,
+            "drive_file_id": s.drive_file_id,
+            "drive_mp3_id": s.drive_mp3_id,
+            "status": s.status,
+            "created_at": s.created_at.isoformat() + "Z" if s.created_at else None,
+        }
+        for s in sessions
+    ]
+
+
+@app.get("/api/sessions/{session_id}")
+async def api_get_session(session_id: int):
+    await init_db()
+    async with async_session() as sess:
+        result = await sess.execute(
+            select(PracticeSession).where(PracticeSession.id == session_id)
+        )
+        ps = result.scalar_one_or_none()
+        if not ps:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        seg_result = await sess.execute(
+            select(SongSegment)
+            .where(SongSegment.session_id == session_id)
+            .order_by(SongSegment.track_number)
+        )
+        segments = seg_result.scalars().all()
+
+        ann_result = await sess.execute(
+            select(Annotation)
+            .where(Annotation.session_id == session_id)
+            .order_by(Annotation.timestamp_sec)
+        )
+        annotations = ann_result.scalars().all()
+
+    return {
+        "id": ps.id,
+        "group_id": ps.group_id,
+        "title": ps.title,
+        "recorded_at": ps.recorded_at.isoformat() if ps.recorded_at else None,
+        "duration_sec": ps.duration_sec,
+        "drive_file_id": ps.drive_file_id,
+        "drive_mp3_id": ps.drive_mp3_id,
+        "status": ps.status,
+        "segments": [
+            {
+                "id": sg.id,
+                "track_number": sg.track_number,
+                "title": sg.title,
+                "start_sec": sg.start_sec,
+                "end_sec": sg.end_sec,
+                "drive_file_id": sg.drive_file_id,
+                "drive_mp3_id": sg.drive_mp3_id,
+                "auto_detected": sg.auto_detected,
+            }
+            for sg in segments
+        ],
+        "annotations": [
+            {
+                "id": a.id,
+                "user_name": a.user_name,
+                "timestamp_sec": a.timestamp_sec,
+                "content": a.content,
+                "annotation_type": a.annotation_type,
+                "created_at": a.created_at.isoformat() + "Z" if a.created_at else None,
+            }
+            for a in annotations
+        ],
+    }
+
+
+@app.post("/api/sessions/{session_id}/segments")
+async def api_create_segments(session_id: int, request: Request):
+    """Bulk-create segments for a session (called from Colab worker)."""
+    await init_db()
+    body = await request.json()
+    segments_data = body if isinstance(body, list) else body.get("segments", [])
+    async with async_session() as session:
+        created = []
+        for seg in segments_data:
+            sg = SongSegment(
+                session_id=session_id,
+                track_number=seg["track_number"],
+                title=seg.get("title"),
+                start_sec=seg["start_sec"],
+                end_sec=seg["end_sec"],
+                drive_file_id=seg.get("drive_file_id"),
+                drive_mp3_id=seg.get("drive_mp3_id"),
+                auto_detected=seg.get("auto_detected", True),
+            )
+            session.add(sg)
+            created.append(sg)
+        await session.commit()
+        for sg in created:
+            await session.refresh(sg)
+    return [{"id": sg.id, "track_number": sg.track_number} for sg in created]
+
+
+@app.patch("/api/segments/{segment_id}")
+async def api_update_segment(segment_id: int, request: Request):
+    """Update segment title or timestamps."""
+    await init_db()
+    body = await request.json()
+    async with async_session() as session:
+        result = await session.execute(
+            select(SongSegment).where(SongSegment.id == segment_id)
+        )
+        sg = result.scalar_one_or_none()
+        if not sg:
+            raise HTTPException(status_code=404, detail="Segment not found")
+        if "title" in body:
+            sg.title = body["title"]
+        if "start_sec" in body:
+            sg.start_sec = body["start_sec"]
+        if "end_sec" in body:
+            sg.end_sec = body["end_sec"]
+        await session.commit()
+    return {"ok": True}
+
+
+@app.post("/api/sessions/{session_id}/annotations")
+async def api_create_annotation(session_id: int, request: Request):
+    await init_db()
+    body = await request.json()
+    user_name = (body.get("user_name") or "").strip()
+    content = (body.get("content") or "").strip()
+    if not user_name or not content:
+        raise HTTPException(status_code=400, detail="user_name and content are required")
+    async with async_session() as session:
+        ann = Annotation(
+            session_id=session_id,
+            user_name=user_name,
+            timestamp_sec=body.get("timestamp_sec", 0),
+            content=content,
+            annotation_type=body.get("annotation_type", "comment"),
+        )
+        session.add(ann)
+        await session.commit()
+        await session.refresh(ann)
+    return {
+        "id": ann.id,
+        "user_name": ann.user_name,
+        "timestamp_sec": ann.timestamp_sec,
+        "content": ann.content,
+        "annotation_type": ann.annotation_type,
+        "created_at": ann.created_at.isoformat() + "Z" if ann.created_at else None,
+    }
+
+
+@app.delete("/api/annotations/{annotation_id}")
+async def api_delete_annotation(annotation_id: int):
+    await init_db()
+    async with async_session() as session:
+        result = await session.execute(
+            delete(Annotation).where(Annotation.id == annotation_id)
+        )
+        await session.commit()
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Annotation not found")
+    return {"ok": True}
+
+
+@app.post("/api/sessions/{session_id}/clips")
+async def api_create_clip_request(session_id: int, request: Request):
+    """Request a clip extraction — Colab worker polls and processes these."""
+    await init_db()
+    body = await request.json()
+    async with async_session() as session:
+        clip = ClipRequest(
+            session_id=session_id,
+            start_sec=body["start_sec"],
+            end_sec=body["end_sec"],
+            title=body.get("title"),
+        )
+        session.add(clip)
+        await session.commit()
+        await session.refresh(clip)
+    return {"id": clip.id, "status": clip.status}
+
+
+@app.get("/api/clips/pending")
+async def api_pending_clips():
+    """List pending clip requests (polled by Colab worker)."""
+    await init_db()
+    async with async_session() as session:
+        stmt = (
+            select(ClipRequest, PracticeSession)
+            .join(PracticeSession, ClipRequest.session_id == PracticeSession.id)
+            .where(ClipRequest.status == "pending")
+            .order_by(ClipRequest.created_at)
+        )
+        result = await session.execute(stmt)
+        rows = result.all()
+    return [
+        {
+            "id": clip.id,
+            "session_id": clip.session_id,
+            "start_sec": clip.start_sec,
+            "end_sec": clip.end_sec,
+            "title": clip.title,
+            "drive_file_id": ps.drive_file_id,
+        }
+        for clip, ps in rows
+    ]
+
+
+@app.patch("/api/clips/{clip_id}")
+async def api_update_clip(clip_id: int, request: Request):
+    """Update clip status after processing (called from Colab worker)."""
+    await init_db()
+    body = await request.json()
+    async with async_session() as session:
+        result = await session.execute(
+            select(ClipRequest).where(ClipRequest.id == clip_id)
+        )
+        clip = result.scalar_one_or_none()
+        if not clip:
+            raise HTTPException(status_code=404, detail="Clip not found")
+        if "status" in body:
+            clip.status = body["status"]
+            if body["status"] == "done":
+                clip.completed_at = datetime.utcnow()
+        if "drive_file_id" in body:
+            clip.drive_file_id = body["drive_file_id"]
+        await session.commit()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Web UI – Practice review page
+# ---------------------------------------------------------------------------
+@app.get("/practice/view", response_class=HTMLResponse)
+async def practice_page(group_id: str = Query(...)):
+    await init_db()
+    return _get_html("practice_page.html")
+
+
+@app.get("/p", response_class=RedirectResponse)
+async def practice_short(g: str = Query(...)):
+    return RedirectResponse(f"/practice/view?group_id={g}")
 
 
 # ---------------------------------------------------------------------------
