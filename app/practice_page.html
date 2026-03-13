@@ -107,7 +107,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   <div id="list-view">
     <div class="header">
       <h1>練習レビュー</h1>
+      <a class="back-btn" id="tasks-link" href="/tasks">タスク管理</a>
     </div>
+    <script>
+      (function(){
+        const gid = new URLSearchParams(location.search).get("group_id");
+        if (gid) document.getElementById("tasks-link").href = "/tasks?group_id=" + encodeURIComponent(gid);
+      })();
+    </script>
     <div class="session-list" id="session-list">
       <div class="loading">読み込み中...</div>
     </div>
