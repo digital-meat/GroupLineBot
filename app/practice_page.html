@@ -478,24 +478,28 @@ window.createSessionFromDrive = async function() {
 
     // Step 5: Register session via API
     progressText.textContent = 'セッションを登録中...';
+    const payload = {
+      group_id: GROUP_ID,
+      title: title,
+      recorded_at: dateStr ? new Date(dateStr).toISOString() : null,
+      duration_sec: durationSec,
+      drive_file_id: selectedDriveFile.id,
+      drive_mp3_id: null,
+      status: 'processed',
+    };
+    console.log('[practice] POST /api/sessions', payload);
     const sessionResp = await fetch(`${API}/api/sessions`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        group_id: GROUP_ID,
-        title: title,
-        recorded_at: dateStr ? new Date(dateStr).toISOString() : null,
-        duration_sec: durationSec,
-        drive_file_id: selectedDriveFile.id,
-        drive_mp3_id: null,
-        status: 'processed',
-      }),
+      body: JSON.stringify(payload),
     });
     if (!sessionResp.ok) {
       const errText = await sessionResp.text();
+      console.error('[practice] session create failed', sessionResp.status, errText);
       throw new Error(`セッション登録失敗 (${sessionResp.status}): ${errText}`);
     }
     const sessionData = await sessionResp.json();
+    console.log('[practice] session created', sessionData);
 
     // Step 6: Register segments
     if (segments.length > 0) {
