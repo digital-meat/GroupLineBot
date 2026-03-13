@@ -739,7 +739,7 @@ async def api_create_session(request: Request):
         ps = PracticeSession(
             group_id=group_id,
             title=title,
-            recorded_at=datetime.fromisoformat(body["recorded_at"]) if body.get("recorded_at") else None,
+            recorded_at=datetime.fromisoformat(body["recorded_at"].replace("Z", "+00:00")) if body.get("recorded_at") else None,
             duration_sec=body.get("duration_sec"),
             drive_file_id=body.get("drive_file_id"),
             drive_mp3_id=body.get("drive_mp3_id"),
