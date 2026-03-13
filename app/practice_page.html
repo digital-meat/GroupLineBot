@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>練習レビュー</title>
+<style>
+:root {
+  --bg: #0f0f0f; --surface: #1a1a1a; --surface2: #252525;
+  --border: #333; --text: #e0e0e0; --text2: #888;
+  --accent: #4fc3f7; --good: #66bb6a; --issue: #ef5350; --comment: #ffa726;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+.container { max-width: 960px; margin: 0 auto; padding: 12px; }
+
+/* Header */
+.header { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.header h1 { font-size: 18px; font-weight: 600; }
+.back-btn { color: var(--accent); text-decoration: none; font-size: 14px; }
+
+/* Session list */
+.session-list { display: flex; flex-direction: column; gap: 8px; }
+.session-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; cursor: pointer; transition: border-color 0.15s; }
+.session-card:hover { border-color: var(--accent); }
+.session-card .title { font-weight: 600; font-size: 15px; }
+.session-card .meta { color: var(--text2); font-size: 13px; margin-top: 2px; }
+.session-card .status { display: inline-block; font-size: 11px; padding: 2px 6px; border-radius: 4px; margin-left: 8px; }
+.session-card .status.processed { background: rgba(102,187,106,0.15); color: var(--good); }
+.session-card .status.pending { background: rgba(255,167,38,0.15); color: var(--comment); }
+
+/* Player view */
+#player-view { display: none; }
+.player-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.player-header h2 { font-size: 16px; }
+.btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.15s; }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent); color: #000; border-color: var(--accent); }
+.btn.primary:hover { opacity: 0.85; }
+
+/* Waveform */
+#waveform { background: var(--surface); border-radius: 8px; margin-bottom: 8px; min-height: 100px; }
+
+/* Transport controls */
+.transport { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.transport .time { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px; color: var(--accent); min-width: 80px; }
+.skip-btn { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+
+/* Segments */
+.segments-section { margin-bottom: 20px; }
+.segments-section h3 { font-size: 14px; color: var(--text2); margin-bottom: 8px; }
+.segment-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px; cursor: pointer; transition: border-color 0.15s; }
+.segment-row:hover, .segment-row.active { border-color: var(--accent); }
+.segment-row .num { color: var(--text2); font-size: 12px; min-width: 28px; }
+.segment-row .seg-title { flex: 1; font-size: 13px; }
+.segment-row .seg-title input { background: transparent; border: none; color: var(--text); font-size: 13px; width: 100%; outline: none; }
+.segment-row .seg-title input:focus { border-bottom: 1px solid var(--accent); }
+.segment-row .seg-time { font-family: monospace; font-size: 12px; color: var(--text2); }
+
+/* Annotations */
+.annotations-section { margin-bottom: 20px; }
+.annotations-section h3 { font-size: 14px; color: var(--text2); margin-bottom: 8px; }
+.annotation { display: flex; gap: 8px; padding: 8px 12px; background: var(--surface); border-radius: 6px; margin-bottom: 4px; align-items: flex-start; border-left: 3px solid var(--comment); }
+.annotation.good { border-left-color: var(--good); }
+.annotation.issue { border-left-color: var(--issue); }
+.annotation .ann-time { font-family: monospace; font-size: 12px; color: var(--accent); cursor: pointer; min-width: 50px; flex-shrink: 0; margin-top: 2px; }
+.annotation .ann-time:hover { text-decoration: underline; }
+.annotation .ann-body { flex: 1; }
+.annotation .ann-user { font-size: 11px; color: var(--text2); }
+.annotation .ann-content { font-size: 13px; }
+.annotation .ann-delete { color: var(--text2); cursor: pointer; font-size: 12px; opacity: 0.5; }
+.annotation .ann-delete:hover { opacity: 1; color: var(--issue); }
+
+/* Add annotation form */
+.add-annotation { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.add-annotation input, .add-annotation select { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 6px; font-size: 13px; }
+.add-annotation input:focus, .add-annotation select:focus { outline: none; border-color: var(--accent); }
+.add-annotation input[name="content"] { flex: 1; min-width: 200px; }
+.add-annotation input[name="user_name"] { width: 100px; }
+
+/* Google Auth */
+.auth-bar { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.auth-bar .auth-status { font-size: 13px; color: var(--text2); }
+.auth-bar .auth-status.ok { color: var(--good); }
+
+/* Loading */
+.loading { text-align: center; padding: 40px; color: var(--text2); }
+
+/* Responsive */
+@media (max-width: 600px) {
+  .transport { gap: 4px; }
+  .segment-row { padding: 6px 8px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- Auth bar -->
+  <div class="auth-bar" id="auth-bar">
+    <span class="auth-status" id="auth-status">Google Drive 未接続</span>
+    <button class="btn primary" id="auth-btn" onclick="handleAuth()">Google でログイン</button>
+    <span style="flex:1"></span>
+    <input type="text" id="user-name-global" placeholder="あなたの名前" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:13px;width:120px;">
+  </div>
+
+  <!-- Session list view -->
+  <div id="list-view">
+    <div class="header">
+      <h1>練習レビュー</h1>
+    </div>
+    <div class="session-list" id="session-list">
+      <div class="loading">読み込み中...</div>
+    </div>
+  </div>
+
+  <!-- Player view -->
+  <div id="player-view">
+    <div class="player-header">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button class="btn" onclick="showList()">&larr; 戻る</button>
+        <h2 id="session-title"></h2>
+      </div>
+    </div>
+
+    <div id="waveform"></div>
+
+    <div class="transport">
+      <button class="btn skip-btn" onclick="skip(-30)" title="-30s">-30</button>
+      <button class="btn skip-btn" onclick="skip(-5)" title="-5s">-5</button>
+      <button class="btn primary" id="play-btn" onclick="togglePlay()" style="width:48px;height:36px;font-size:14px;">&#9654;</button>
+      <button class="btn skip-btn" onclick="skip(5)" title="+5s">+5</button>
+      <button class="btn skip-btn" onclick="skip(30)" title="+30s">+30</button>
+      <span class="time" id="current-time">0:00</span>
+      <span style="color:var(--text2);font-size:13px;">/</span>
+      <span class="time" id="total-time" style="color:var(--text2);">0:00</span>
+      <span style="flex:1"></span>
+      <label style="font-size:12px;color:var(--text2);display:flex;align-items:center;gap:4px;">
+        速度
+        <select id="speed-select" onchange="setSpeed(this.value)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:4px;font-size:12px;">
+          <option value="0.5">0.5x</option>
+          <option value="0.75">0.75x</option>
+          <option value="1" selected>1x</option>
+          <option value="1.25">1.25x</option>
+          <option value="1.5">1.5x</option>
+        </select>
+      </label>
+    </div>
+
+    <!-- Segments -->
+    <div class="segments-section">
+      <h3>セグメント（曲の区切り）</h3>
+      <div id="segments-container"></div>
+    </div>
+
+    <!-- Annotations -->
+    <div class="annotations-section">
+      <h3>アノテーション</h3>
+      <div id="annotations-container"></div>
+      <div class="add-annotation">
+        <input name="user_name" id="ann-user" placeholder="名前">
+        <select id="ann-type">
+          <option value="comment">コメント</option>
+          <option value="good">良い!</option>
+          <option value="issue">要改善</option>
+        </select>
+        <input name="content" id="ann-content" placeholder="メモを入力... (現在位置にタイムスタンプ)">
+        <button class="btn primary" onclick="addAnnotation()">追加</button>
+      </div>
+    </div>
+
+    <!-- Clip request -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:20px;">
+      <h3 style="font-size:14px;color:var(--text2);margin-bottom:8px;">切り抜きリクエスト</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <label style="font-size:13px;">開始:
+          <input type="text" id="clip-start" placeholder="0:00" style="width:60px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:13px;">
+        </label>
+        <label style="font-size:13px;">終了:
+          <input type="text" id="clip-end" placeholder="3:00" style="width:60px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:13px;">
+        </label>
+        <input type="text" id="clip-title" placeholder="タイトル (任意)" style="flex:1;min-width:120px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:13px;">
+        <button class="btn primary" onclick="requestClip()">切り抜きリクエスト</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- WaveSurfer.js -->
+<script src="https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.esm.js" type="module"></script>
+<script type="module">
+import WaveSurfer from 'https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.esm.js';
+
+const params = new URLSearchParams(location.search);
+const GROUP_ID = params.get('group_id');
+const API = '';
+let wavesurfer = null;
+let currentSession = null;
+let gAccessToken = null;
+
+// Expose to global for onclick handlers
+window._ws = { wavesurfer: null };
+
+// ── Google Auth (GIS) ──
+window.handleAuth = async function() {
+  // Use Google Identity Services (token model)
+  if (!window.google?.accounts?.oauth2) {
+    alert('Google Identity Services が読み込まれていません。\nポップアップブロッカーを無効にしてください。');
+    return;
+  }
+  const client = google.accounts.oauth2.initTokenClient({
+    client_id: getClientId(),
+    scope: 'https://www.googleapis.com/auth/drive.readonly',
+    callback: (resp) => {
+      if (resp.access_token) {
+        gAccessToken = resp.access_token;
+        document.getElementById('auth-status').textContent = 'Google Drive 接続済み';
+        document.getElementById('auth-status').className = 'auth-status ok';
+        document.getElementById('auth-btn').textContent = '再接続';
+        localStorage.setItem('g_access_token', resp.access_token);
+      }
+    },
+  });
+  client.requestAccessToken();
+};
+
+function getClientId() {
+  // Read from meta tag or localStorage
+  const meta = document.querySelector('meta[name="google-client-id"]');
+  if (meta) return meta.content;
+  return localStorage.getItem('google_client_id') || prompt('Google OAuth Client ID を入力してください:');
+}
+
+// Try restoring token
+gAccessToken = localStorage.getItem('g_access_token');
+if (gAccessToken) {
+  document.getElementById('auth-status').textContent = 'Google Drive 接続済み (キャッシュ)';
+  document.getElementById('auth-status').className = 'auth-status ok';
+  document.getElementById('auth-btn').textContent = '再接続';
+}
+
+// Restore user name
+const savedName = localStorage.getItem('practice_user_name');
+if (savedName) document.getElementById('user-name-global').value = savedName;
+document.getElementById('user-name-global').addEventListener('change', (e) => {
+  localStorage.setItem('practice_user_name', e.target.value);
+});
+
+// ── Session list ──
+async function loadSessions() {
+  const container = document.getElementById('session-list');
+  try {
+    const resp = await fetch(`${API}/api/sessions?group_id=${GROUP_ID}`);
+    const sessions = await resp.json();
+    if (!sessions.length) {
+      container.innerHTML = '<div class="loading">練習セッションがありません。<br>Colabノートブックで録音を処理してください。</div>';
+      return;
+    }
+    container.innerHTML = sessions.map(s => {
+      const dur = s.duration_sec ? `${Math.floor(s.duration_sec/60)}分` : '';
+      const date = s.recorded_at ? new Date(s.recorded_at).toLocaleDateString('ja-JP') : '';
+      return `<div class="session-card" onclick="openSession(${s.id})">
+        <span class="title">${esc(s.title)}</span>
+        <span class="status ${s.status}">${s.status}</span>
+        <div class="meta">${date} ${dur}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    container.innerHTML = `<div class="loading">読み込みエラー: ${e.message}</div>`;
+  }
+}
+
+window.openSession = async function(id) {
+  document.getElementById('list-view').style.display = 'none';
+  document.getElementById('player-view').style.display = 'block';
+
+  try {
+    const resp = await fetch(`${API}/api/sessions/${id}`);
+    currentSession = await resp.json();
+    document.getElementById('session-title').textContent = currentSession.title;
+    renderSegments(currentSession.segments);
+    renderAnnotations(currentSession.annotations);
+
+    // Load audio
+    if (currentSession.drive_mp3_id || currentSession.drive_file_id) {
+      await loadAudio(currentSession.drive_mp3_id || currentSession.drive_file_id);
+    }
+  } catch(e) {
+    alert('セッション読み込みエラー: ' + e.message);
+  }
+};
+
+window.showList = function() {
+  document.getElementById('list-view').style.display = 'block';
+  document.getElementById('player-view').style.display = 'none';
+  if (wavesurfer) { wavesurfer.destroy(); wavesurfer = null; window._ws.wavesurfer = null; }
+};
+
+// ── Audio loading from Google Drive ──
+async function loadAudio(driveFileId) {
+  if (!gAccessToken) {
+    document.getElementById('waveform').innerHTML = '<div class="loading">Google Driveにログインしてから音声を再生できます</div>';
+    return;
+  }
+
+  document.getElementById('waveform').innerHTML = '<div class="loading">音声読み込み中...</div>';
+
+  try {
+    // Fetch audio blob from Drive API
+    const resp = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`,
+      { headers: { 'Authorization': `Bearer ${gAccessToken}` } }
+    );
+    if (!resp.ok) {
+      if (resp.status === 401) {
+        gAccessToken = null;
+        localStorage.removeItem('g_access_token');
+        document.getElementById('auth-status').textContent = 'トークン期限切れ — 再ログインしてください';
+        document.getElementById('auth-status').className = 'auth-status';
+      }
+      throw new Error(`Drive API error: ${resp.status}`);
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+
+    document.getElementById('waveform').innerHTML = '';
+
+    if (wavesurfer) wavesurfer.destroy();
+    wavesurfer = WaveSurfer.create({
+      container: '#waveform',
+      waveColor: '#4a5568',
+      progressColor: '#4fc3f7',
+      cursorColor: '#4fc3f7',
+      height: 100,
+      barWidth: 2,
+      barGap: 1,
+      barRadius: 2,
+      url: url,
+    });
+
+    window._ws.wavesurfer = wavesurfer;
+
+    wavesurfer.on('ready', () => {
+      document.getElementById('total-time').textContent = fmtTime(wavesurfer.getDuration());
+    });
+    wavesurfer.on('timeupdate', (t) => {
+      document.getElementById('current-time').textContent = fmtTime(t);
+    });
+    wavesurfer.on('play', () => {
+      document.getElementById('play-btn').innerHTML = '&#9646;&#9646;';
+    });
+    wavesurfer.on('pause', () => {
+      document.getElementById('play-btn').innerHTML = '&#9654;';
+    });
+  } catch(e) {
+    document.getElementById('waveform').innerHTML = `<div class="loading">音声読み込みエラー: ${esc(e.message)}</div>`;
+  }
+}
+
+// ── Transport ──
+window.togglePlay = function() { if (wavesurfer) wavesurfer.playPause(); };
+window.skip = function(sec) {
+  if (!wavesurfer) return;
+  const t = wavesurfer.getCurrentTime() + sec;
+  wavesurfer.seekTo(Math.max(0, Math.min(t, wavesurfer.getDuration())) / wavesurfer.getDuration());
+};
+window.setSpeed = function(rate) { if (wavesurfer) wavesurfer.setPlaybackRate(parseFloat(rate)); };
+window.seekTo = function(sec) {
+  if (!wavesurfer) return;
+  wavesurfer.seekTo(Math.max(0, sec) / wavesurfer.getDuration());
+};
+
+// ── Segments ──
+function renderSegments(segments) {
+  const c = document.getElementById('segments-container');
+  if (!segments || !segments.length) {
+    c.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:8px;">セグメント未検出</div>';
+    return;
+  }
+  c.innerHTML = segments.map(sg => {
+    const dur = sg.end_sec - sg.start_sec;
+    return `<div class="segment-row" onclick="seekTo(${sg.start_sec})" data-id="${sg.id}">
+      <span class="num">#${sg.track_number}</span>
+      <span class="seg-title">
+        <input value="${esc(sg.title || '')}" placeholder="曲名を入力..."
+               onclick="event.stopPropagation()"
+               onchange="updateSegmentTitle(${sg.id}, this.value)">
+      </span>
+      <span class="seg-time">${fmtTime(sg.start_sec)} - ${fmtTime(sg.end_sec)} (${Math.floor(dur/60)}:${String(Math.floor(dur%60)).padStart(2,'0')})</span>
+    </div>`;
+  }).join('');
+}
+
+window.updateSegmentTitle = async function(id, title) {
+  await fetch(`${API}/api/segments/${id}`, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({title}),
+  });
+};
+
+// ── Annotations ──
+function renderAnnotations(annotations) {
+  const c = document.getElementById('annotations-container');
+  if (!annotations || !annotations.length) {
+    c.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:8px;">まだアノテーションがありません</div>';
+    return;
+  }
+  c.innerHTML = annotations.map(a => `
+    <div class="annotation ${a.annotation_type}">
+      <span class="ann-time" onclick="seekTo(${a.timestamp_sec})">${fmtTime(a.timestamp_sec)}</span>
+      <div class="ann-body">
+        <span class="ann-user">${esc(a.user_name)}</span>
+        <div class="ann-content">${esc(a.content)}</div>
+      </div>
+      <span class="ann-delete" onclick="deleteAnnotation(${a.id})">&times;</span>
+    </div>
+  `).join('');
+}
+
+window.addAnnotation = async function() {
+  if (!currentSession) return;
+  const userName = document.getElementById('ann-user').value.trim()
+                   || document.getElementById('user-name-global').value.trim();
+  const content = document.getElementById('ann-content').value.trim();
+  if (!userName || !content) { alert('名前とメモを入力してください'); return; }
+
+  const timestampSec = wavesurfer ? wavesurfer.getCurrentTime() : 0;
+
+  const resp = await fetch(`${API}/api/sessions/${currentSession.id}/annotations`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      user_name: userName,
+      content: content,
+      timestamp_sec: timestampSec,
+      annotation_type: document.getElementById('ann-type').value,
+    }),
+  });
+  const ann = await resp.json();
+  currentSession.annotations.push(ann);
+  currentSession.annotations.sort((a,b) => a.timestamp_sec - b.timestamp_sec);
+  renderAnnotations(currentSession.annotations);
+  document.getElementById('ann-content').value = '';
+  // Save user name for next time
+  document.getElementById('ann-user').value = userName;
+  localStorage.setItem('practice_user_name', userName);
+};
+
+window.deleteAnnotation = async function(id) {
+  await fetch(`${API}/api/annotations/${id}`, {method: 'DELETE'});
+  currentSession.annotations = currentSession.annotations.filter(a => a.id !== id);
+  renderAnnotations(currentSession.annotations);
+};
+
+// ── Clip request ──
+window.requestClip = async function() {
+  if (!currentSession) return;
+  const startSec = parseTime(document.getElementById('clip-start').value);
+  const endSec = parseTime(document.getElementById('clip-end').value);
+  if (startSec === null || endSec === null || endSec <= startSec) {
+    alert('開始・終了時間を正しく入力してください (例: 1:30)');
+    return;
+  }
+  const title = document.getElementById('clip-title').value.trim();
+
+  await fetch(`${API}/api/sessions/${currentSession.id}/clips`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ start_sec: startSec, end_sec: endSec, title }),
+  });
+  alert('切り抜きリクエストを送信しました。Colabワーカーが処理します。');
+  document.getElementById('clip-start').value = '';
+  document.getElementById('clip-end').value = '';
+  document.getElementById('clip-title').value = '';
+};
+
+// ── Helpers ──
+function fmtTime(sec) {
+  if (sec == null || isNaN(sec)) return '0:00';
+  const s = Math.floor(sec);
+  const m = Math.floor(s / 60);
+  const h = Math.floor(m / 60);
+  if (h > 0) return `${h}:${String(m%60).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+  return `${m}:${String(s%60).padStart(2,'0')}`;
+}
+
+function parseTime(str) {
+  if (!str) return null;
+  const parts = str.split(':').map(Number);
+  if (parts.some(isNaN)) return null;
+  if (parts.length === 3) return parts[0]*3600 + parts[1]*60 + parts[2];
+  if (parts.length === 2) return parts[0]*60 + parts[1];
+  return parts[0];
+}
+
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ── Keyboard shortcuts ──
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  if (e.code === 'ArrowLeft') { e.preventDefault(); skip(e.shiftKey ? -30 : -5); }
+  if (e.code === 'ArrowRight') { e.preventDefault(); skip(e.shiftKey ? 30 : 5); }
+});
+
+// ── Init ──
+loadSessions();
+</script>
+
+<!-- Google Identity Services -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</body>
+</html>
