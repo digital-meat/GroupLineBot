@@ -728,27 +728,41 @@ async def usage_page():
 
 @app.post("/api/sessions")
 async def api_create_session(request: Request):
-    """Register a practice session (called from Colab worker)."""
-    await init_db()
-    body = await request.json()
-    group_id = body.get("group_id")
-    title = (body.get("title") or "").strip()
-    if not group_id or not title:
-        raise HTTPException(status_code=400, detail="group_id and title are required")
-    async with async_session() as session:
-        ps = PracticeSession(
-            group_id=group_id,
-            title=title,
-            recorded_at=datetime.fromisoformat(body["recorded_at"].replace("Z", "+00:00")) if body.get("recorded_at") else None,
-            duration_sec=body.get("duration_sec"),
-            drive_file_id=body.get("drive_file_id"),
-            drive_mp3_id=body.get("drive_mp3_id"),
-            status=body.get("status", "pending"),
-        )
-        session.add(ps)
-        await session.commit()
-        await session.refresh(ps)
-    return {"id": ps.id, "title": ps.title, "status": ps.status}
+    """Register a practice session."""
+    try:
+        await init_db()
+        body = await request.json()
+        logger.info("POST /api/sessions body=%s", body)
+        group_id = body.get("group_id")
+        title = (body.get("title") or "").strip()
+        if not group_id or not title:
+            raise HTTPException(status_code=400, detail="group_id and title are required")
+        raw_date = body.get("recorded_at")
+        if raw_date:
+            # JS toISOString() emits "Z" which Python <3.11 fromisoformat can't parse
+            recorded_at = datetime.fromisoformat(str(raw_date).replace("Z", "+00:00"))
+        else:
+            recorded_at = None
+        async with async_session() as session:
+            ps = PracticeSession(
+                group_id=group_id,
+                title=title,
+                recorded_at=recorded_at,
+                duration_sec=body.get("duration_sec"),
+                drive_file_id=body.get("drive_file_id"),
+                drive_mp3_id=body.get("drive_mp3_id"),
+                status=body.get("status", "pending"),
+            )
+            session.add(ps)
+            await session.commit()
+            await session.refresh(ps)
+        logger.info("Created session id=%s title=%s", ps.id, ps.title)
+        return {"id": ps.id, "title": ps.title, "status": ps.status}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("POST /api/sessions failed")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/sessions")
@@ -840,29 +854,37 @@ async def api_get_session(session_id: int):
 
 @app.post("/api/sessions/{session_id}/segments")
 async def api_create_segments(session_id: int, request: Request):
-    """Bulk-create segments for a session (called from Colab worker)."""
-    await init_db()
-    body = await request.json()
-    segments_data = body if isinstance(body, list) else body.get("segments", [])
-    async with async_session() as session:
-        created = []
-        for seg in segments_data:
-            sg = SongSegment(
-                session_id=session_id,
-                track_number=seg["track_number"],
-                title=seg.get("title"),
-                start_sec=seg["start_sec"],
-                end_sec=seg["end_sec"],
-                drive_file_id=seg.get("drive_file_id"),
-                drive_mp3_id=seg.get("drive_mp3_id"),
-                auto_detected=seg.get("auto_detected", True),
-            )
-            session.add(sg)
-            created.append(sg)
-        await session.commit()
-        for sg in created:
-            await session.refresh(sg)
-    return [{"id": sg.id, "track_number": sg.track_number} for sg in created]
+    """Bulk-create segments for a session."""
+    try:
+        await init_db()
+        body = await request.json()
+        logger.info("POST /api/sessions/%s/segments count=%s", session_id,
+                     len(body) if isinstance(body, list) else "obj")
+        segments_data = body if isinstance(body, list) else body.get("segments", [])
+        async with async_session() as session:
+            created = []
+            for seg in segments_data:
+                sg = SongSegment(
+                    session_id=session_id,
+                    track_number=seg["track_number"],
+                    title=seg.get("title"),
+                    start_sec=seg["start_sec"],
+                    end_sec=seg["end_sec"],
+                    drive_file_id=seg.get("drive_file_id"),
+                    drive_mp3_id=seg.get("drive_mp3_id"),
+                    auto_detected=seg.get("auto_detected", True),
+                )
+                session.add(sg)
+                created.append(sg)
+            await session.commit()
+            for sg in created:
+                await session.refresh(sg)
+        return [{"id": sg.id, "track_number": sg.track_number} for sg in created]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("POST /api/sessions/%s/segments failed", session_id)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.patch("/api/segments/{segment_id}")
