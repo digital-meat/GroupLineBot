@@ -37,6 +37,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .btn:hover { border-color: var(--accent); color: var(--accent); }
 .btn.primary { background: var(--accent); color: #000; border-color: var(--accent); }
 .btn.primary:hover { opacity: 0.85; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* Waveform */
 #waveform { background: var(--surface); border-radius: 8px; margin-bottom: 8px; min-height: 100px; }
@@ -83,6 +84,29 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .auth-bar .auth-status { font-size: 13px; color: var(--text2); }
 .auth-bar .auth-status.ok { color: var(--good); }
 
+/* New session / Drive browser */
+.new-session-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; display: none; }
+.new-session-panel h3 { font-size: 15px; margin-bottom: 12px; }
+.drive-file-list { max-height: 300px; overflow-y: auto; }
+.drive-file { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px; cursor: pointer; transition: border-color 0.15s; }
+.drive-file:hover { border-color: var(--accent); }
+.drive-file.selected { border-color: var(--accent); background: rgba(79,195,247,0.08); }
+.drive-file .file-icon { font-size: 18px; }
+.drive-file .file-info { flex: 1; }
+.drive-file .file-name { font-size: 13px; font-weight: 500; }
+.drive-file .file-meta { font-size: 11px; color: var(--text2); }
+.drive-folder { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px; cursor: pointer; background: var(--surface2); font-size: 13px; }
+.drive-folder:hover { border-color: var(--accent); }
+.drive-breadcrumb { display: flex; gap: 4px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; font-size: 12px; color: var(--text2); }
+.drive-breadcrumb span { cursor: pointer; color: var(--accent); }
+.drive-breadcrumb span:hover { text-decoration: underline; }
+
+/* Progress bar */
+.progress-container { margin: 12px 0; display: none; }
+.progress-bar { height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.3s; width: 0%; }
+.progress-text { font-size: 12px; color: var(--text2); margin-top: 4px; }
+
 /* Loading */
 .loading { text-align: center; padding: 40px; color: var(--text2); }
 
@@ -107,7 +131,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   <div id="list-view">
     <div class="header">
       <h1>練習レビュー</h1>
-      <a class="back-btn" id="tasks-link" href="/tasks">タスク管理</a>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="btn primary" id="new-session-btn" onclick="toggleNewSessionPanel()">+ 新規セッション</button>
+        <a class="back-btn" id="tasks-link" href="/tasks">タスク管理</a>
+      </div>
     </div>
     <script>
       (function(){
@@ -115,6 +142,29 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
         if (gid) document.getElementById("tasks-link").href = "/tasks?group_id=" + encodeURIComponent(gid);
       })();
     </script>
+
+    <!-- New session panel -->
+    <div class="new-session-panel" id="new-session-panel">
+      <h3>Google Driveから音声ファイルを選択</h3>
+      <div id="drive-auth-msg" style="color:var(--text2);font-size:13px;margin-bottom:8px;display:none;">
+        Google Driveにログインしてください
+      </div>
+      <div class="drive-breadcrumb" id="drive-breadcrumb"></div>
+      <div class="drive-file-list" id="drive-file-list">
+        <div class="loading">ファイル一覧を読み込み中...</div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input type="text" id="new-session-title" placeholder="セッションタイトル (自動入力)" style="flex:1;min-width:200px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:13px;">
+        <input type="date" id="new-session-date" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:13px;">
+        <button class="btn primary" id="create-session-btn" onclick="createSessionFromDrive()" disabled>セッション作成 + 解析</button>
+        <button class="btn" onclick="toggleNewSessionPanel()">キャンセル</button>
+      </div>
+      <div class="progress-container" id="progress-container">
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        <div class="progress-text" id="progress-text"></div>
+      </div>
+    </div>
+
     <div class="session-list" id="session-list">
       <div class="loading">読み込み中...</div>
     </div>
@@ -155,7 +205,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
     <!-- Segments -->
     <div class="segments-section">
-      <h3>セグメント（曲の区切り）</h3>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <h3 style="font-size:14px;color:var(--text2);margin:0;">セグメント（曲の区切り）</h3>
+        <button class="btn" id="detect-segments-btn" onclick="detectSegmentsFromPlayer()" style="font-size:11px;padding:3px 8px;">自動検出</button>
+      </div>
       <div id="segments-container"></div>
     </div>
 
@@ -175,9 +228,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       </div>
     </div>
 
-    <!-- Clip request -->
+    <!-- Clip extraction (client-side) -->
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:20px;">
-      <h3 style="font-size:14px;color:var(--text2);margin-bottom:8px;">切り抜きリクエスト</h3>
+      <h3 style="font-size:14px;color:var(--text2);margin-bottom:8px;">切り抜きダウンロード</h3>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
         <label style="font-size:13px;">開始:
           <input type="text" id="clip-start" placeholder="0:00" style="width:60px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:13px;">
@@ -185,8 +238,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
         <label style="font-size:13px;">終了:
           <input type="text" id="clip-end" placeholder="3:00" style="width:60px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:13px;">
         </label>
-        <input type="text" id="clip-title" placeholder="タイトル (任意)" style="flex:1;min-width:120px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:13px;">
-        <button class="btn primary" onclick="requestClip()">切り抜きリクエスト</button>
+        <input type="text" id="clip-title" placeholder="ファイル名 (任意)" style="flex:1;min-width:120px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:13px;">
+        <button class="btn primary" onclick="downloadClip()">WAVダウンロード</button>
       </div>
     </div>
   </div>
@@ -203,13 +256,14 @@ const API = '';
 let wavesurfer = null;
 let currentSession = null;
 let gAccessToken = null;
+let audioBuffer = null;  // Decoded audio for segment detection + clip extraction
+let selectedDriveFile = null;
 
 // Expose to global for onclick handlers
 window._ws = { wavesurfer: null };
 
 // ── Google Auth (GIS) ──
 window.handleAuth = async function() {
-  // Use Google Identity Services (token model)
   if (!window.google?.accounts?.oauth2) {
     alert('Google Identity Services が読み込まれていません。\nポップアップブロッカーを無効にしてください。');
     return;
@@ -224,6 +278,10 @@ window.handleAuth = async function() {
         document.getElementById('auth-status').className = 'auth-status ok';
         document.getElementById('auth-btn').textContent = '再接続';
         localStorage.setItem('g_access_token', resp.access_token);
+        // Refresh drive browser if open
+        if (document.getElementById('new-session-panel').style.display === 'block') {
+          browseDriveFolder('root');
+        }
       }
     },
   });
@@ -231,7 +289,6 @@ window.handleAuth = async function() {
 };
 
 function getClientId() {
-  // Read from meta tag or localStorage
   const meta = document.querySelector('meta[name="google-client-id"]');
   if (meta) return meta.content;
   return localStorage.getItem('google_client_id') || prompt('Google OAuth Client ID を入力してください:');
@@ -252,6 +309,378 @@ document.getElementById('user-name-global').addEventListener('change', (e) => {
   localStorage.setItem('practice_user_name', e.target.value);
 });
 
+// ── Drive browser state ──
+let driveFolderStack = []; // [{id, name}]
+
+window.toggleNewSessionPanel = function() {
+  const panel = document.getElementById('new-session-panel');
+  if (panel.style.display === 'block') {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = 'block';
+  selectedDriveFile = null;
+  document.getElementById('create-session-btn').disabled = true;
+  if (!gAccessToken) {
+    document.getElementById('drive-auth-msg').style.display = 'block';
+    document.getElementById('drive-file-list').innerHTML = '';
+    return;
+  }
+  document.getElementById('drive-auth-msg').style.display = 'none';
+  driveFolderStack = [{id: 'root', name: 'マイドライブ'}];
+  browseDriveFolder('root');
+};
+
+async function browseDriveFolder(folderId) {
+  const container = document.getElementById('drive-file-list');
+  container.innerHTML = '<div class="loading">読み込み中...</div>';
+  updateBreadcrumb();
+
+  try {
+    // List folders + audio files
+    const q = `'${folderId}' in parents and trashed = false`;
+    const fields = 'files(id,name,mimeType,size,modifiedTime)';
+    const resp = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(fields)}&orderBy=name&pageSize=200`,
+      { headers: { 'Authorization': `Bearer ${gAccessToken}` } }
+    );
+    if (!resp.ok) {
+      if (resp.status === 401) {
+        gAccessToken = null;
+        localStorage.removeItem('g_access_token');
+        container.innerHTML = '<div class="loading">トークン期限切れ — 再ログインしてください</div>';
+        return;
+      }
+      throw new Error(`Drive API error: ${resp.status}`);
+    }
+    const data = await resp.json();
+    const files = data.files || [];
+
+    // Separate folders and audio files
+    const folders = files.filter(f => f.mimeType === 'application/vnd.google-apps.folder');
+    const audioFiles = files.filter(f =>
+      f.mimeType?.startsWith('audio/') ||
+      /\.(wav|mp3|m4a|flac|ogg|aac|wma)$/i.test(f.name)
+    );
+
+    if (folders.length === 0 && audioFiles.length === 0) {
+      container.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:20px;text-align:center;">このフォルダには音声ファイルがありません</div>';
+      return;
+    }
+
+    let html = '';
+    for (const f of folders) {
+      html += `<div class="drive-folder" onclick="enterDriveFolder('${f.id}', '${esc(f.name)}')">
+        <span>📁</span> <span>${esc(f.name)}</span>
+      </div>`;
+    }
+    for (const f of audioFiles) {
+      const sizeMB = f.size ? (parseInt(f.size) / (1024*1024)).toFixed(0) + ' MB' : '';
+      const date = f.modifiedTime ? new Date(f.modifiedTime).toLocaleDateString('ja-JP') : '';
+      html += `<div class="drive-file" data-id="${f.id}" data-name="${esc(f.name)}" onclick="selectDriveFile('${f.id}', '${esc(f.name)}')">
+        <span class="file-icon">🎵</span>
+        <div class="file-info">
+          <div class="file-name">${esc(f.name)}</div>
+          <div class="file-meta">${date} ${sizeMB}</div>
+        </div>
+      </div>`;
+    }
+    container.innerHTML = html;
+  } catch(e) {
+    container.innerHTML = `<div class="loading">エラー: ${esc(e.message)}</div>`;
+  }
+}
+
+function updateBreadcrumb() {
+  const bc = document.getElementById('drive-breadcrumb');
+  bc.innerHTML = driveFolderStack.map((f, i) => {
+    if (i === driveFolderStack.length - 1) return `<span style="color:var(--text);cursor:default;">${esc(f.name)}</span>`;
+    return `<span onclick="navigateBreadcrumb(${i})">${esc(f.name)}</span> <span style="cursor:default;color:var(--text2);">/</span>`;
+  }).join(' ');
+}
+
+window.enterDriveFolder = function(id, name) {
+  driveFolderStack.push({id, name});
+  browseDriveFolder(id);
+};
+
+window.navigateBreadcrumb = function(index) {
+  driveFolderStack = driveFolderStack.slice(0, index + 1);
+  browseDriveFolder(driveFolderStack[index].id);
+};
+
+window.selectDriveFile = function(id, name) {
+  // Deselect previous
+  document.querySelectorAll('.drive-file').forEach(el => el.classList.remove('selected'));
+  // Select new
+  const el = document.querySelector(`.drive-file[data-id="${id}"]`);
+  if (el) el.classList.add('selected');
+
+  selectedDriveFile = { id, name };
+  document.getElementById('create-session-btn').disabled = false;
+
+  // Auto-fill title
+  const titleInput = document.getElementById('new-session-title');
+  if (!titleInput.value) {
+    titleInput.value = name.replace(/\.(wav|mp3|m4a|flac|ogg|aac|wma)$/i, '');
+  }
+  // Try parse date from filename
+  const dateInput = document.getElementById('new-session-date');
+  if (!dateInput.value) {
+    const m = name.match(/(\d{4})[-_](\d{2})[-_](\d{2})/);
+    if (m) dateInput.value = `${m[1]}-${m[2]}-${m[3]}`;
+  }
+};
+
+// ── Create session from Drive file ──
+window.createSessionFromDrive = async function() {
+  if (!selectedDriveFile || !gAccessToken) return;
+
+  const title = document.getElementById('new-session-title').value.trim() || selectedDriveFile.name;
+  const dateStr = document.getElementById('new-session-date').value;
+  const btn = document.getElementById('create-session-btn');
+  btn.disabled = true;
+  btn.textContent = '処理中...';
+
+  const progressContainer = document.getElementById('progress-container');
+  const progressFill = document.getElementById('progress-fill');
+  const progressText = document.getElementById('progress-text');
+  progressContainer.style.display = 'block';
+
+  try {
+    // Step 1: Share file for web playback
+    progressText.textContent = '音声ファイルをダウンロード中...';
+    progressFill.style.width = '10%';
+
+    // Step 2: Download audio for analysis
+    const audioResp = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${selectedDriveFile.id}?alt=media`,
+      { headers: { 'Authorization': `Bearer ${gAccessToken}` } }
+    );
+    if (!audioResp.ok) throw new Error(`Drive download failed: ${audioResp.status}`);
+    const audioBlob = await audioResp.blob();
+    progressFill.style.width = '40%';
+
+    // Step 3: Decode audio
+    progressText.textContent = '音声をデコード中...';
+    const arrayBuf = await audioBlob.arrayBuffer();
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const decoded = await audioCtx.decodeAudioData(arrayBuf);
+    audioCtx.close();
+    const durationSec = decoded.duration;
+    progressFill.style.width = '60%';
+
+    // Step 4: Auto-detect segments
+    progressText.textContent = 'セグメント自動検出中...';
+    const segments = detectSegments(decoded);
+    progressFill.style.width = '80%';
+
+    // Step 5: Register session via API
+    progressText.textContent = 'セッションを登録中...';
+    const sessionResp = await fetch(`${API}/api/sessions`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        group_id: GROUP_ID,
+        title: title,
+        recorded_at: dateStr ? new Date(dateStr).toISOString() : null,
+        duration_sec: durationSec,
+        drive_file_id: selectedDriveFile.id,
+        drive_mp3_id: null,
+        status: 'processed',
+      }),
+    });
+    const sessionData = await sessionResp.json();
+
+    // Step 6: Register segments
+    if (segments.length > 0) {
+      const segPayload = segments.map((seg, i) => ({
+        track_number: i + 1,
+        start_sec: seg.start,
+        end_sec: seg.end,
+        auto_detected: true,
+      }));
+      await fetch(`${API}/api/sessions/${sessionData.id}/segments`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(segPayload),
+      });
+    }
+
+    progressFill.style.width = '100%';
+    progressText.textContent = `完了! ${segments.length} セグメント検出`;
+
+    // Refresh session list
+    await loadSessions();
+
+    // Reset form after a moment
+    setTimeout(() => {
+      document.getElementById('new-session-panel').style.display = 'none';
+      progressContainer.style.display = 'none';
+      progressFill.style.width = '0%';
+      document.getElementById('new-session-title').value = '';
+      document.getElementById('new-session-date').value = '';
+      selectedDriveFile = null;
+      btn.textContent = 'セッション作成 + 解析';
+      btn.disabled = true;
+    }, 1500);
+
+  } catch(e) {
+    progressText.textContent = `エラー: ${e.message}`;
+    progressFill.style.width = '0%';
+    btn.disabled = false;
+    btn.textContent = 'セッション作成 + 解析';
+  }
+};
+
+// ── Segment detection (client-side, same logic as Colab) ──
+const DETECT_WINDOW_SEC = 0.5;
+const DETECT_DROP_DB = 25.0;
+const DETECT_MIN_LOW_SEC = 4.0;
+const DETECT_MIN_TRACK_SEC = 60.0;
+const DETECT_PAD_SEC = 0.5;
+
+function detectSegments(decodedAudio) {
+  // Downmix to mono
+  const numChannels = decodedAudio.numberOfChannels;
+  const length = decodedAudio.length;
+  const sampleRate = decodedAudio.sampleRate;
+  const mono = new Float32Array(length);
+
+  for (let ch = 0; ch < numChannels; ch++) {
+    const channelData = decodedAudio.getChannelData(ch);
+    for (let i = 0; i < length; i++) {
+      mono[i] += channelData[i] / numChannels;
+    }
+  }
+
+  // Compute RMS envelope in dB
+  const windowSamples = Math.floor(sampleRate * DETECT_WINDOW_SEC);
+  const numWindows = Math.floor(length / windowSamples);
+  if (numWindows === 0) return [{start: 0, end: decodedAudio.duration}];
+
+  const rmsDb = new Float32Array(numWindows);
+  for (let w = 0; w < numWindows; w++) {
+    const offset = w * windowSamples;
+    let sum = 0;
+    for (let i = 0; i < windowSamples; i++) {
+      const s = mono[offset + i];
+      sum += s * s;
+    }
+    const rms = Math.sqrt(sum / windowSamples);
+    rmsDb[w] = 20 * Math.log10(rms + 1e-10);
+  }
+
+  // Overall mean
+  let meanDb = 0;
+  for (let i = 0; i < numWindows; i++) meanDb += rmsDb[i];
+  meanDb /= numWindows;
+
+  // Find low regions
+  const threshold = meanDb - DETECT_DROP_DB;
+  const lowRegions = [];
+  let inLow = false, lowStart = 0;
+  for (let i = 0; i < numWindows; i++) {
+    if (rmsDb[i] < threshold && !inLow) {
+      lowStart = i;
+      inLow = true;
+    } else if (rmsDb[i] >= threshold && inLow) {
+      if ((i - lowStart) * DETECT_WINDOW_SEC >= DETECT_MIN_LOW_SEC) {
+        lowRegions.push({start: lowStart * DETECT_WINDOW_SEC, end: i * DETECT_WINDOW_SEC});
+      }
+      inLow = false;
+    }
+  }
+  if (inLow && (numWindows - lowStart) * DETECT_WINDOW_SEC >= DETECT_MIN_LOW_SEC) {
+    lowRegions.push({start: lowStart * DETECT_WINDOW_SEC, end: numWindows * DETECT_WINDOW_SEC});
+  }
+
+  const totalDur = decodedAudio.duration;
+  if (lowRegions.length === 0) return [{start: 0, end: totalDur}];
+
+  // Split at midpoints of low regions
+  const splits = lowRegions.map(r => (r.start + r.end) / 2);
+  const bounds = [0, ...splits, totalDur];
+  let raw = [];
+  for (let i = 0; i < bounds.length - 1; i++) {
+    raw.push({start: bounds[i], end: bounds[i+1]});
+  }
+
+  // Merge short segments
+  let merged = [];
+  for (const seg of raw) {
+    if (merged.length > 0 && (merged[merged.length-1].end - merged[merged.length-1].start) < DETECT_MIN_TRACK_SEC) {
+      merged[merged.length-1].end = seg.end;
+    } else {
+      merged.push({...seg});
+    }
+  }
+  if (merged.length > 1 && (merged[merged.length-1].end - merged[merged.length-1].start) < DETECT_MIN_TRACK_SEC) {
+    merged[merged.length-2].end = merged[merged.length-1].end;
+    merged.pop();
+  }
+
+  // Apply padding
+  const padded = [];
+  for (let i = 0; i < merged.length; i++) {
+    const ps = i > 0 ? merged[i].start + DETECT_PAD_SEC : merged[i].start;
+    const pe = i < merged.length - 1 ? merged[i].end - DETECT_PAD_SEC : merged[i].end;
+    if (pe > ps) padded.push({start: ps, end: pe});
+  }
+
+  return padded;
+}
+
+// ── Detect segments from player view (re-analyze loaded audio) ──
+window.detectSegmentsFromPlayer = async function() {
+  if (!audioBuffer) {
+    alert('音声が読み込まれていません');
+    return;
+  }
+  if (!currentSession) return;
+
+  const btn = document.getElementById('detect-segments-btn');
+  btn.disabled = true;
+  btn.textContent = '検出中...';
+
+  try {
+    const segments = detectSegments(audioBuffer);
+    if (segments.length === 0) {
+      alert('セグメントが検出されませんでした');
+      return;
+    }
+
+    // Register via API
+    const segPayload = segments.map((seg, i) => ({
+      track_number: i + 1,
+      start_sec: seg.start,
+      end_sec: seg.end,
+      auto_detected: true,
+    }));
+    const resp = await fetch(`${API}/api/sessions/${currentSession.id}/segments`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(segPayload),
+    });
+    const result = await resp.json();
+
+    // Update local state and re-render
+    currentSession.segments = result.map((r, i) => ({
+      id: r.id,
+      track_number: r.track_number,
+      title: null,
+      start_sec: segments[i].start,
+      end_sec: segments[i].end,
+      auto_detected: true,
+    }));
+    renderSegments(currentSession.segments);
+    alert(`${segments.length} セグメントを検出・登録しました`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '自動検出';
+  }
+};
+
 // ── Session list ──
 async function loadSessions() {
   const container = document.getElementById('session-list');
@@ -259,7 +688,7 @@ async function loadSessions() {
     const resp = await fetch(`${API}/api/sessions?group_id=${GROUP_ID}`);
     const sessions = await resp.json();
     if (!sessions.length) {
-      container.innerHTML = '<div class="loading">練習セッションがありません。<br>Colabノートブックで録音を処理してください。</div>';
+      container.innerHTML = '<div class="loading">練習セッションがありません。<br>「+ 新規セッション」からGoogle Driveの録音を追加してください。</div>';
       return;
     }
     container.innerHTML = sessions.map(s => {
@@ -287,9 +716,10 @@ window.openSession = async function(id) {
     renderSegments(currentSession.segments);
     renderAnnotations(currentSession.annotations);
 
-    // Load audio
-    if (currentSession.drive_mp3_id || currentSession.drive_file_id) {
-      await loadAudio(currentSession.drive_mp3_id || currentSession.drive_file_id);
+    // Load audio (prefer mp3, fallback to original)
+    const driveId = currentSession.drive_mp3_id || currentSession.drive_file_id;
+    if (driveId) {
+      await loadAudio(driveId);
     }
   } catch(e) {
     alert('セッション読み込みエラー: ' + e.message);
@@ -300,6 +730,7 @@ window.showList = function() {
   document.getElementById('list-view').style.display = 'block';
   document.getElementById('player-view').style.display = 'none';
   if (wavesurfer) { wavesurfer.destroy(); wavesurfer = null; window._ws.wavesurfer = null; }
+  audioBuffer = null;
 };
 
 // ── Audio loading from Google Drive ──
@@ -312,7 +743,6 @@ async function loadAudio(driveFileId) {
   document.getElementById('waveform').innerHTML = '<div class="loading">音声読み込み中...</div>';
 
   try {
-    // Fetch audio blob from Drive API
     const resp = await fetch(
       `https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`,
       { headers: { 'Authorization': `Bearer ${gAccessToken}` } }
@@ -328,6 +758,17 @@ async function loadAudio(driveFileId) {
     }
     const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
+
+    // Also decode for segment detection + clip extraction
+    try {
+      const arrBuf = await blob.arrayBuffer();
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      audioBuffer = await ctx.decodeAudioData(arrBuf);
+      ctx.close();
+    } catch(decodeErr) {
+      console.warn('Audio decode for analysis failed:', decodeErr);
+      audioBuffer = null;
+    }
 
     document.getElementById('waveform').innerHTML = '';
 
@@ -380,7 +821,7 @@ window.seekTo = function(sec) {
 function renderSegments(segments) {
   const c = document.getElementById('segments-container');
   if (!segments || !segments.length) {
-    c.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:8px;">セグメント未検出</div>';
+    c.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:8px;">セグメント未検出 — 「自動検出」で曲の区切りを検出できます</div>';
     return;
   }
   c.innerHTML = segments.map(sg => {
@@ -448,7 +889,6 @@ window.addAnnotation = async function() {
   currentSession.annotations.sort((a,b) => a.timestamp_sec - b.timestamp_sec);
   renderAnnotations(currentSession.annotations);
   document.getElementById('ann-content').value = '';
-  // Save user name for next time
   document.getElementById('ann-user').value = userName;
   localStorage.setItem('practice_user_name', userName);
 };
@@ -459,27 +899,94 @@ window.deleteAnnotation = async function(id) {
   renderAnnotations(currentSession.annotations);
 };
 
-// ── Clip request ──
-window.requestClip = async function() {
-  if (!currentSession) return;
+// ── Client-side clip extraction (WAV download) ──
+window.downloadClip = function() {
+  if (!audioBuffer) {
+    alert('音声が読み込まれていません');
+    return;
+  }
   const startSec = parseTime(document.getElementById('clip-start').value);
   const endSec = parseTime(document.getElementById('clip-end').value);
   if (startSec === null || endSec === null || endSec <= startSec) {
     alert('開始・終了時間を正しく入力してください (例: 1:30)');
     return;
   }
-  const title = document.getElementById('clip-title').value.trim();
 
-  await fetch(`${API}/api/sessions/${currentSession.id}/clips`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ start_sec: startSec, end_sec: endSec, title }),
-  });
-  alert('切り抜きリクエストを送信しました。Colabワーカーが処理します。');
-  document.getElementById('clip-start').value = '';
-  document.getElementById('clip-end').value = '';
-  document.getElementById('clip-title').value = '';
+  const title = document.getElementById('clip-title').value.trim() || 'clip';
+  const sampleRate = audioBuffer.sampleRate;
+  const numChannels = audioBuffer.numberOfChannels;
+  const startSample = Math.floor(startSec * sampleRate);
+  const endSample = Math.min(Math.floor(endSec * sampleRate), audioBuffer.length);
+  const clipLength = endSample - startSample;
+
+  if (clipLength <= 0) {
+    alert('範囲が無効です');
+    return;
+  }
+
+  // Extract channel data
+  const channels = [];
+  for (let ch = 0; ch < numChannels; ch++) {
+    const full = audioBuffer.getChannelData(ch);
+    channels.push(full.slice(startSample, endSample));
+  }
+
+  // Encode to WAV
+  const wavBlob = encodeWav(channels, sampleRate);
+  const url = URL.createObjectURL(wavBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${title}.wav`;
+  a.click();
+  URL.revokeObjectURL(url);
 };
+
+function encodeWav(channels, sampleRate) {
+  const numChannels = channels.length;
+  const length = channels[0].length;
+  const bytesPerSample = 2; // 16-bit
+  const blockAlign = numChannels * bytesPerSample;
+  const dataSize = length * blockAlign;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  // RIFF header
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(view, 8, 'WAVE');
+
+  // fmt chunk
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true); // chunk size
+  view.setUint16(20, 1, true);  // PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bytesPerSample * 8, true);
+
+  // data chunk
+  writeString(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  // Interleave and write samples
+  let offset = 44;
+  for (let i = 0; i < length; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      const sample = Math.max(-1, Math.min(1, channels[ch][i]));
+      view.setInt16(offset, sample * 0x7FFF, true);
+      offset += 2;
+    }
+  }
+
+  return new Blob([buffer], {type: 'audio/wav'});
+}
+
+function writeString(view, offset, str) {
+  for (let i = 0; i < str.length; i++) {
+    view.setUint8(offset + i, str.charCodeAt(i));
+  }
+}
 
 // ── Helpers ──
 function fmtTime(sec) {
