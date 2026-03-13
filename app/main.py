@@ -739,8 +739,9 @@ async def api_create_session(request: Request):
             raise HTTPException(status_code=400, detail="group_id and title are required")
         raw_date = body.get("recorded_at")
         if raw_date:
-            # JS toISOString() emits "Z" which Python <3.11 fromisoformat can't parse
-            recorded_at = datetime.fromisoformat(str(raw_date).replace("Z", "+00:00"))
+            # JS toISOString() emits "Z"; parse then strip tzinfo for naive TIMESTAMP column
+            dt = datetime.fromisoformat(str(raw_date).replace("Z", "+00:00"))
+            recorded_at = dt.replace(tzinfo=None)
         else:
             recorded_at = None
         async with async_session() as session:
