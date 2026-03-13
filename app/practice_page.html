@@ -459,6 +459,7 @@ window.createSessionFromDrive = async function() {
     );
     if (!audioResp.ok) throw new Error(`Drive download failed: ${audioResp.status}`);
     const audioBlob = await audioResp.blob();
+    if (audioBlob.size < 1000) throw new Error('ファイルが空または破損しています');
     progressFill.style.width = '40%';
 
     // Step 3: Decode audio
@@ -490,6 +491,10 @@ window.createSessionFromDrive = async function() {
         status: 'processed',
       }),
     });
+    if (!sessionResp.ok) {
+      const errText = await sessionResp.text();
+      throw new Error(`セッション登録失敗 (${sessionResp.status}): ${errText}`);
+    }
     const sessionData = await sessionResp.json();
 
     // Step 6: Register segments
