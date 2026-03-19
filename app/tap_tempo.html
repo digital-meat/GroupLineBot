@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tap Tempo – BPM Tracker</title>
+<style>
+:root {
+  --bg: #0f0f0f; --surface: #1a1a1a; --surface2: #252525;
+  --border: #333; --text: #e0e0e0; --text2: #888;
+  --accent: #4fc3f7; --good: #66bb6a; --issue: #ef5350; --comment: #ffa726;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; user-select: none; -webkit-user-select: none; }
+.container { max-width: 700px; margin: 0 auto; padding: 12px; }
+
+.header { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.header h1 { font-size: 18px; font-weight: 600; }
+
+/* BPM display */
+.bpm-display { text-align: center; padding: 24px 0 16px; }
+.bpm-value { font-size: 72px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); transition: color 0.2s; }
+.bpm-label { font-size: 14px; color: var(--text2); margin-top: -4px; }
+.elapsed { font-size: 13px; color: var(--text2); margin-top: 8px; font-variant-numeric: tabular-nums; }
+
+/* Tap button */
+.tap-area { display: flex; justify-content: center; gap: 12px; padding: 16px 0; }
+.tap-btn {
+  width: 180px; height: 180px; border-radius: 50%;
+  background: var(--surface2); border: 3px solid var(--accent);
+  color: var(--accent); font-size: 20px; font-weight: 600;
+  cursor: pointer; transition: transform 0.08s, background 0.08s;
+  display: flex; align-items: center; justify-content: center;
+  outline: none; -webkit-tap-highlight-color: transparent;
+}
+.tap-btn:active { transform: scale(0.94); background: rgba(79,195,247,0.15); }
+.tap-btn.recording { border-color: var(--issue); color: var(--issue); }
+
+/* Controls */
+.controls { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+.ctrl-btn {
+  padding: 8px 18px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font-size: 13px;
+  cursor: pointer; transition: border-color 0.15s;
+}
+.ctrl-btn:hover { border-color: var(--accent); }
+.ctrl-btn.active { background: rgba(79,195,247,0.12); border-color: var(--accent); color: var(--accent); }
+
+/* Stats row */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px; }
+.stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px; text-align: center; }
+.stat-card .val { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat-card .lbl { font-size: 11px; color: var(--text2); }
+
+/* Chart */
+.chart-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 16px; }
+.chart-title { font-size: 13px; color: var(--text2); margin-bottom: 8px; }
+canvas { width: 100%; height: 220px; display: block; }
+
+/* Tap log */
+.log-section { margin-bottom: 16px; }
+.log-title { font-size: 13px; color: var(--text2); margin-bottom: 6px; }
+.log-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.log-table th { text-align: left; color: var(--text2); padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.log-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.log-scroll { max-height: 200px; overflow-y: auto; }
+
+/* Average line label */
+.avg-legend { font-size: 12px; color: var(--comment); text-align: center; margin-top: 4px; }
+
+@media (max-width: 480px) {
+  .bpm-value { font-size: 56px; }
+  .tap-btn { width: 150px; height: 150px; font-size: 18px; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  canvas { height: 180px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>Tap Tempo</h1>
+  </div>
+
+  <div class="bpm-display">
+    <div class="bpm-value" id="bpmValue">---</div>
+    <div class="bpm-label">BPM</div>
+    <div class="elapsed" id="elapsed"></div>
+  </div>
+
+  <div class="tap-area">
+    <button class="tap-btn" id="tapBtn">TAP</button>
+  </div>
+
+  <div class="controls">
+    <button class="ctrl-btn" id="resetBtn">リセット</button>
+    <button class="ctrl-btn" id="exportBtn">CSV出力</button>
+  </div>
+
+  <div class="stats">
+    <div class="stat-card"><div class="val" id="avgBpm">--</div><div class="lbl">平均 BPM</div></div>
+    <div class="stat-card"><div class="val" id="minBpm">--</div><div class="lbl">最小</div></div>
+    <div class="stat-card"><div class="val" id="maxBpm">--</div><div class="lbl">最大</div></div>
+    <div class="stat-card"><div class="val" id="tapCount">0</div><div class="lbl">タップ数</div></div>
+  </div>
+
+  <div class="chart-wrap">
+    <div class="chart-title">BPM 推移</div>
+    <canvas id="chart"></canvas>
+    <div class="avg-legend" id="avgLegend"></div>
+  </div>
+
+  <div class="log-section">
+    <div class="log-title">タップログ</div>
+    <div class="log-scroll">
+      <table class="log-table">
+        <thead><tr><th>#</th><th>経過時間</th><th>間隔(ms)</th><th>BPM</th></tr></thead>
+        <tbody id="logBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const tapBtn = document.getElementById('tapBtn');
+  const bpmValue = document.getElementById('bpmValue');
+  const elapsedEl = document.getElementById('elapsed');
+  const resetBtn = document.getElementById('resetBtn');
+  const exportBtn = document.getElementById('exportBtn');
+  const avgBpmEl = document.getElementById('avgBpm');
+  const minBpmEl = document.getElementById('minBpm');
+  const maxBpmEl = document.getElementById('maxBpm');
+  const tapCountEl = document.getElementById('tapCount');
+  const logBody = document.getElementById('logBody');
+  const canvas = document.getElementById('chart');
+  const ctx = canvas.getContext('2d');
+  const avgLegend = document.getElementById('avgLegend');
+
+  let taps = [];        // timestamps (ms, performance.now)
+  let bpmHistory = [];   // { elapsed: seconds, bpm: number, interval: ms }
+  let startTime = null;
+  let timerRaf = null;
+
+  function fmt(sec) {
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
+
+  function updateTimer() {
+    if (!startTime) return;
+    const sec = (performance.now() - startTime) / 1000;
+    elapsedEl.textContent = fmt(sec);
+    timerRaf = requestAnimationFrame(updateTimer);
+  }
+
+  function onTap() {
+    const now = performance.now();
+
+    if (!startTime) {
+      startTime = now;
+      timerRaf = requestAnimationFrame(updateTimer);
+    }
+
+    taps.push(now);
+
+    if (taps.length >= 2) {
+      const interval = now - taps[taps.length - 2];
+      const bpm = 60000 / interval;
+      const elapsed = (now - startTime) / 1000;
+
+      bpmHistory.push({ elapsed, bpm, interval });
+      bpmValue.textContent = Math.round(bpm);
+      tapBtn.classList.add('recording');
+
+      updateStats();
+      drawChart();
+      updateLog();
+    }
+
+    tapCountEl.textContent = taps.length;
+  }
+
+  function updateStats() {
+    if (bpmHistory.length === 0) return;
+    const bpms = bpmHistory.map(h => h.bpm);
+    const avg = bpms.reduce((a, b) => a + b, 0) / bpms.length;
+    const min = Math.min(...bpms);
+    const max = Math.max(...bpms);
+    avgBpmEl.textContent = avg.toFixed(1);
+    minBpmEl.textContent = Math.round(min);
+    maxBpmEl.textContent = Math.round(max);
+  }
+
+  function drawChart() {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.scale(dpr, dpr);
+    const W = rect.width;
+    const H = rect.height;
+
+    ctx.clearRect(0, 0, W, H);
+
+    if (bpmHistory.length < 2) {
+      ctx.fillStyle = '#555';
+      ctx.font = '13px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('タップするとグラフが表示されます', W / 2, H / 2);
+      return;
+    }
+
+    const bpms = bpmHistory.map(h => h.bpm);
+    const avg = bpms.reduce((a, b) => a + b, 0) / bpms.length;
+    const minB = Math.min(...bpms);
+    const maxB = Math.max(...bpms);
+    const range = Math.max(maxB - minB, 4);
+    const padBpm = range * 0.15;
+    const yMin = minB - padBpm;
+    const yMax = maxB + padBpm;
+    const xMax = bpmHistory[bpmHistory.length - 1].elapsed;
+
+    const pad = { l: 40, r: 12, t: 10, b: 24 };
+    const cw = W - pad.l - pad.r;
+    const ch = H - pad.t - pad.b;
+
+    function toX(elapsed) { return pad.l + (elapsed / xMax) * cw; }
+    function toY(bpm) { return pad.t + ch - ((bpm - yMin) / (yMax - yMin)) * ch; }
+
+    // Grid lines
+    ctx.strokeStyle = '#2a2a2a';
+    ctx.lineWidth = 1;
+    const gridSteps = 4;
+    for (let i = 0; i <= gridSteps; i++) {
+      const bpm = yMin + (yMax - yMin) * (i / gridSteps);
+      const y = toY(bpm);
+      ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+      ctx.fillStyle = '#666'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+      ctx.fillText(Math.round(bpm), pad.l - 4, y + 3);
+    }
+
+    // Time labels
+    ctx.fillStyle = '#666'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+    const tSteps = Math.min(6, Math.max(2, Math.floor(xMax / 10)));
+    for (let i = 0; i <= tSteps; i++) {
+      const t = (xMax / tSteps) * i;
+      ctx.fillText(fmt(t), toX(t), H - 4);
+    }
+
+    // Average line
+    ctx.strokeStyle = 'rgba(255,167,38,0.5)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(pad.l, toY(avg)); ctx.lineTo(W - pad.r, toY(avg)); ctx.stroke();
+    ctx.setLineDash([]);
+    avgLegend.textContent = `平均: ${avg.toFixed(1)} BPM`;
+
+    // BPM line
+    ctx.strokeStyle = '#4fc3f7';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    bpmHistory.forEach((h, i) => {
+      const x = toX(h.elapsed);
+      const y = toY(h.bpm);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Dots – color by deviation
+    bpmHistory.forEach(h => {
+      const x = toX(h.elapsed);
+      const y = toY(h.bpm);
+      const dev = h.bpm - avg;
+      let color = '#4fc3f7';
+      if (dev > 2) color = '#ef5350';  // rushing
+      if (dev < -2) color = '#66bb6a'; // dragging
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+
+  function updateLog() {
+    // Show last 50 entries, newest first
+    const rows = bpmHistory.slice(-50).reverse();
+    logBody.innerHTML = rows.map((h, i) => {
+      const idx = bpmHistory.length - i;
+      return `<tr><td>${idx}</td><td>${fmt(h.elapsed)}</td><td>${Math.round(h.interval)}</td><td>${h.bpm.toFixed(1)}</td></tr>`;
+    }).join('');
+  }
+
+  function reset() {
+    taps = [];
+    bpmHistory = [];
+    startTime = null;
+    if (timerRaf) cancelAnimationFrame(timerRaf);
+    timerRaf = null;
+    bpmValue.textContent = '---';
+    elapsedEl.textContent = '';
+    avgBpmEl.textContent = '--';
+    minBpmEl.textContent = '--';
+    maxBpmEl.textContent = '--';
+    tapCountEl.textContent = '0';
+    logBody.innerHTML = '';
+    avgLegend.textContent = '';
+    tapBtn.classList.remove('recording');
+    drawChart();
+  }
+
+  function exportCSV() {
+    if (bpmHistory.length === 0) return;
+    let csv = 'tap_number,elapsed_seconds,interval_ms,bpm\n';
+    bpmHistory.forEach((h, i) => {
+      csv += `${i + 1},${h.elapsed.toFixed(2)},${Math.round(h.interval)},${h.bpm.toFixed(1)}\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `tap_tempo_${new Date().toISOString().slice(0,16).replace(':','-')}.csv`;
+    a.click();
+  }
+
+  // Event listeners
+  tapBtn.addEventListener('click', onTap);
+  resetBtn.addEventListener('click', reset);
+  exportBtn.addEventListener('click', exportCSV);
+
+  // Keyboard: space or Enter to tap
+  document.addEventListener('keydown', e => {
+    if (e.code === 'Space' || e.code === 'Enter') {
+      e.preventDefault();
+      onTap();
+    }
+  });
+
+  // Resize chart
+  window.addEventListener('resize', () => { if (bpmHistory.length >= 2) drawChart(); });
+
+  drawChart();
+})();
+</script>
+</body>
+</html>
