@@ -34,7 +34,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   outline: none; -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
 }
-.tap-btn:active { transform: scale(0.94); background: rgba(79,195,247,0.15); }
+.tap-btn.pressed { transform: scale(0.94); background: rgba(79,195,247,0.15); }
 .tap-btn.recording { border-color: var(--issue); color: var(--issue); }
 
 /* Controls */
@@ -328,8 +328,11 @@ canvas { width: 100%; height: 220px; display: block; }
     el.addEventListener('touchstart', function(e) {
       e.preventDefault();
       touched = true;
+      el.classList.add('pressed');
       handler();
     }, { passive: false });
+    el.addEventListener('touchend', function() { el.classList.remove('pressed'); });
+    el.addEventListener('touchcancel', function() { el.classList.remove('pressed'); });
     el.addEventListener('click', function(e) {
       if (touched) { touched = false; return; }
       handler();
